@@ -21,19 +21,23 @@ enum GateFailure: Equatable {
         switch self {
         case .screenRecordingDenied:
             return """
-            macOS won’t let Perch see a Chrome window until you allow it. \
-            Open Privacy & Security → Screen Recording and switch Perch on.
+            Perch asked macOS for Screen Recording as soon as it opened, so a \
+            permission box should be on screen now.
 
-            You only have to do this once.
+            Screen Recording is one macOS never lets an app switch on for you — \
+            the box only takes you to the right Settings pane, where Perch is \
+            already listed. Turn it on there, then come back and relaunch.
             """
         case .extensionMissing:
             return """
-            Perch and its Chrome extension only work as a pair. The app moves the \
-            picture; the extension is what stops sites from noticing you’ve looked \
-            away — that’s what kills the exit-intent popups and the “are you still \
-            watching?” interruptions.
+            Perch and its Chrome extension only work as a pair. The app moves \
+            the picture; the extension blocks the exit-intent popups and the \
+            “are you sure you want to leave?” prompts.
 
-            Install the extension, then come back and press Check Again.
+            Chrome only lets an app add an extension to a session that app \
+            started itself, so Perch will close Chrome and open it again with \
+            the extension already in place. Chrome restores your tabs as usual, \
+            but anything you’ve typed and not sent will be lost.
             """
         case .chromeNotRunning:
             return "Open Google Chrome and Perch will pick it up automatically."
@@ -47,6 +51,16 @@ final class AppState: ObservableObject {
     @Published private(set) var gateFailures: [GateFailure] = []
     @Published private(set) var extensionPresent = false
     @Published private(set) var screenRecordingGranted = false
+    /// False once macOS has an answer on file — from then on a prompt is a
+    /// silent no-op and Settings is genuinely the only route.
+    @Published private(set) var canPromptScreenRecording = true
+    @Published private(set) var canPromptAccessibility = true
+    /// After switching Perch on in Settings, the running process still has the
+    /// old answer — macOS hands a Screen Recording grant out at launch. So once
+    /// we've asked and are still denied, offer the restart that actually fixes it.
+    var shouldOfferRelaunch: Bool {
+        !screenRecordingGranted && !canPromptScreenRecording
+    }
 
     // Windows
     @Published private(set) var windows: [CapturableWindow] = []
@@ -109,7 +123,15 @@ final class AppState: ObservableObject {
             Task { @MainActor in self?.tick() }
         }
 
-        Task { await refreshAll() }
+        Task {
+            await refreshAll()
+            // Ask straight away, while asking still puts a dialog on screen.
+            // Waiting for a button press spends the one prompt macOS allows on
+            // a moment the user may never reach.
+            if PermissionPrompter.canPromptForScreenRecording {
+                requestScreenRecording()
+            }
+        }
     }
 
     func shutdown() {
@@ -127,21 +149,31 @@ final class AppState: ObservableObject {
     // MARK: - Gate
 
     func refreshAll() async {
-        accessibilityGranted = InputForwarder.hasPermission
+        accessibilityGranted = PermissionPrompter.accessibilityGranted
+        canPromptScreenRecording = PermissionPrompter.canPromptForScreenRecording
+        canPromptAccessibility = PermissionPrompter.canPromptForAccessibility
         await refreshWindows()
         refreshGate()
     }
 
-    /// `CGPreflightScreenCaptureAccess` answers without prompting, which lets the
-    /// gate screen show the real state instead of nagging on every launch.
     private func checkScreenRecording() -> Bool {
-        CGPreflightScreenCaptureAccess()
+        PermissionPrompter.screenRecordingGranted
     }
 
+    /// Puts the system dialog on screen. Only does anything the first time —
+    /// see PermissionPrompter for why.
     func requestScreenRecording() {
-        CGRequestScreenCaptureAccess()
+        let granted = PermissionPrompter.promptForScreenRecording()
+        _ = granted
+        canPromptScreenRecording = PermissionPrompter.canPromptForScreenRecording
         Task { await refreshAll() }
     }
+
+    func openScreenRecordingSettings() {
+        PermissionPrompter.openScreenRecordingSettings()
+    }
+
+    func relaunchPerch() { PermissionPrompter.relaunchPerch() }
 
     func refreshGate() {
         var failures: [GateFailure] = []
@@ -240,15 +272,16 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Shows the system dialog, which has its own "Open System Settings"
+    /// button. Opening Settings ourselves as well would bury that dialog.
     func requestAccessibility() {
-        InputForwarder.requestPermission()
-        InputForwarder.openAccessibilitySettings()
+        PermissionPrompter.promptForAccessibility()
+        canPromptAccessibility = PermissionPrompter.canPromptForAccessibility
+        Task { await refreshAll() }
     }
 
-    func openScreenRecordingSettings() {
-        let url = URL(string:
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
-        NSWorkspace.shared.open(url)
+    func openAccessibilitySettings() {
+        PermissionPrompter.openAccessibilitySettings()
     }
 
     func openSetupPage() {

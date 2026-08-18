@@ -40,10 +40,24 @@ struct GateView: View {
                         HStack {
                             switch failure {
                             case .screenRecordingDenied:
+                                // Settings is always offered because it is the
+                                // only route that actually grants this one.
+                                // Re-asking is offered only while macOS would
+                                // still show a dialog — after that it is a
+                                // silent no-op and the button would be a lie.
                                 Button("Open Screen Recording Settings") {
                                     state.openScreenRecordingSettings()
                                 }
-                                Button("Ask Now") { state.requestScreenRecording() }
+                                .keyboardShortcut(.defaultAction)
+
+                                if state.canPromptScreenRecording {
+                                    Button("Ask Again") { state.requestScreenRecording() }
+                                }
+                                if state.shouldOfferRelaunch {
+                                    Button("Relaunch Perch") { state.relaunchPerch() }
+                                        .help("Already switched it on? Perch needs a restart "
+                                            + "to pick the permission up.")
+                                }
                             case .extensionMissing:
                                 Button(state.isLaunchingChrome
                                        ? "Restarting Chrome…" : "Set Up Chrome Now") {

@@ -36,8 +36,32 @@ That's it. On first run Perch:
 3. offers **Set Up Chrome Now**, which restarts Chrome with the extension
    already loaded.
 
-Grant **Screen Recording** once when asked. **Accessibility** is optional, and
-only needed to click and scroll inside the mirror.
+## Permissions
+
+Perch asks macOS itself rather than telling you to go hunting in System
+Settings. The Screen Recording dialog is raised automatically on first launch,
+and Accessibility is raised from the button in Settings.
+
+Two macOS facts shape this, and the UI is written around them rather than
+pretending otherwise:
+
+- **TCC prompts once.** The first `CGRequestScreenCaptureAccess()` shows a
+  dialog; every call after that returns the stored answer silently with nothing
+  on screen. So Perch asks immediately at launch, while asking still does
+  something, and once that prompt is spent the button changes to a deep link
+  into the exact Settings pane instead of staying there to be clicked uselessly.
+- **Screen Recording can't be granted from the dialog.** macOS never offers an
+  inline "Allow" for it — the box only has *Open System Settings* and *Deny*.
+  Perch's wording says that plainly instead of telling you to press an Allow
+  button that doesn't exist.
+
+After switching Perch on in Settings you have to relaunch, because macOS hands a
+Screen Recording grant to a process at launch and not after. There's a
+**Relaunch Perch** button for exactly that.
+
+The stable signing identity matters here too: TCC keys its record to the code
+signature, so an ad-hoc build would burn its one prompt on every rebuild and be
+stuck in the deep-link path forever.
 
 ## Why Perch has to launch Chrome
 

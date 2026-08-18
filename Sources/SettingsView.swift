@@ -14,7 +14,14 @@ struct SettingsView: View {
                            + "clicks through to Chrome.")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Button("Grant Accessibility Access") { state.requestAccessibility() }
+                        if state.canPromptAccessibility {
+                            Button("Ask macOS for Access") { state.requestAccessibility() }
+                        } else {
+                            // The one prompt is spent; only Settings works now.
+                            Button("Open Accessibility Settings") {
+                                state.openAccessibilitySettings()
+                            }
+                        }
                     }
                 }
 
