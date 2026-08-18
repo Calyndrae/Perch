@@ -31,6 +31,9 @@ cat > "$STAGE/READ ME FIRST.txt" <<'TXT'
 Perch
 =====
 
+Websites that ask to record your screen only ever get their own page.
+
+
 1. Drag Perch.app onto the Applications folder shown beside it.
 
 2. The first time you open it, macOS will refuse, because this is a locally
@@ -42,20 +45,24 @@ Perch
      - Or, in Terminal:
            xattr -dr com.apple.quarantine /Applications/Perch.app
 
-3. Perch will ask macOS for Screen Recording as soon as it opens. macOS never
-   lets an app turn that one on for you, so the box takes you to
-   Settings > Privacy & Security > Screen Recording, where Perch is already
-   listed. Switch it on, then use the Relaunch Perch button — a Screen
-   Recording grant only reaches an app at launch.
+3. Perch asks macOS for Screen Recording as soon as it opens. macOS never lets
+   an app turn that one on for you, so the box just takes you to
+   Settings > Privacy & Security > Screen Recording with Perch already listed.
+   Switch it on, then press "Relaunch Perch" — the grant only reaches an app
+   at launch.
 
-4. Press "Set Up Chrome Now". Perch restarts Chrome with its extension
-   already loaded. Chrome restores your tabs; anything typed and unsent is
-   lost, so finish what you're writing first.
+4. Press "Set Up Chrome Now". A SECOND Chrome opens, on its own profile, with
+   the extension already loaded. Your everyday Chrome is not touched, not
+   closed, and loses no tabs.
 
-Accessibility is optional, and only needed if you want to click and scroll
-inside the mirrored window.
+   Use that second Chrome for anything you want protected. Chrome does not
+   allow an app to protect your default profile, which is why there are two.
 
-Source: https://github.com/Calyndrae/Perch
+That is the whole setup. No chrome://extensions, no Developer Mode.
+
+Screen Recording is the only permission needed.
+
+Source and guide: https://github.com/Calyndrae/Perch
 TXT
 
 hdiutil create -quiet \
