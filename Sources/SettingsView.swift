@@ -8,25 +8,10 @@ struct SettingsView: View {
             Section {
                 Toggle("Let me click and scroll in the mirror", isOn: $state.forwardInput)
 
-                if state.forwardInput && !state.accessibilityGranted {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("macOS needs Accessibility permission before Perch can pass your "
-                           + "clicks through to Chrome.")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if state.canPromptAccessibility {
-                            Button("Ask macOS for Access") { state.requestAccessibility() }
-                        } else {
-                            // The one prompt is spent; only Settings works now.
-                            Button("Open Accessibility Settings") {
-                                state.openAccessibilitySettings()
-                            }
-                        }
-                    }
-                }
-
-                Text("Clicks land in the real Chrome window without pulling Chrome to the front. "
-                   + "Typing isn’t forwarded — click into Chrome itself to type.")
+                Text("Clicks and scrolling go to the page over Chrome's own DevTools "
+                   + "channel, so Chrome never comes to the front and no extra permission "
+                   + "is needed. Page content only — not the tab strip or address bar. "
+                   + "Typing isn’t forwarded.")
                     .font(.caption).foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } header: {
@@ -44,9 +29,6 @@ struct SettingsView: View {
                 }
                 LabeledContent("Screen Recording") {
                     Text(state.screenRecordingGranted ? "Granted" : "Not granted").font(.caption)
-                }
-                LabeledContent("Accessibility") {
-                    Text(state.accessibilityGranted ? "Granted" : "Not granted").font(.caption)
                 }
                 Button("Open Setup Instructions") { state.openSetupPage() }
             } header: {

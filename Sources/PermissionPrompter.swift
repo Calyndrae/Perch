@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import CoreGraphics
 
 /// Puts the real macOS permission dialogs on screen instead of sending you into
@@ -15,11 +14,14 @@ import CoreGraphics
 /// Perch's stable signing identity matters here too. TCC keys its record to the
 /// code signature, so an ad-hoc build would burn its one prompt on every
 /// rebuild and then be stuck in the deep-link path forever.
+///
+/// Screen Recording is the only permission Perch needs. Clicking through the
+/// mirror used to require Accessibility; input now travels over the DevTools
+/// pipe instead, so that grant was dropped entirely.
 enum PermissionPrompter {
 
     private enum Key {
         static let askedScreenRecording = "PerchAskedScreenRecording"
-        static let askedAccessibility = "PerchAskedAccessibility"
     }
 
     // MARK: - Screen Recording
@@ -54,34 +56,6 @@ enum PermissionPrompter {
 
     static func openScreenRecordingSettings() {
         open("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-    }
-
-    // MARK: - Accessibility
-
-    static var accessibilityGranted: Bool { AXIsProcessTrusted() }
-
-    static var hasAskedForAccessibility: Bool {
-        UserDefaults.standard.bool(forKey: Key.askedAccessibility)
-    }
-
-    static var canPromptForAccessibility: Bool {
-        !accessibilityGranted && !hasAskedForAccessibility
-    }
-
-    /// Shows the system dialog, which carries its own "Open System Settings"
-    /// button. We deliberately do NOT also open Settings ourselves — doing both
-    /// throws a window at you on top of the dialog you were about to read.
-    @discardableResult
-    static func promptForAccessibility() -> Bool {
-        UserDefaults.standard.set(true, forKey: Key.askedAccessibility)
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue()
-        let trusted = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
-        NSLog("[Perch] accessibility prompt shown; trusted=%@", trusted ? "yes" : "no")
-        return trusted
-    }
-
-    static func openAccessibilitySettings() {
-        open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
     }
 
     // MARK: - Relaunch

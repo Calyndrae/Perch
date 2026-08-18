@@ -79,7 +79,7 @@ The stable signing identity matters here too: TCC keys its record to the code
 signature, so an ad-hoc build would burn its one prompt on every rebuild and be
 stuck in the deep-link path forever.
 
-## Why Perch has to launch Chrome
+## Why Perch runs its own Chrome profile
 
 Chrome has closed every other route on macOS. Measured against Chrome 151:
 
@@ -93,6 +93,18 @@ Chrome has closed every other route on macOS. Measured against Chrome 151:
 
 So Perch spawns Chrome with `--remote-debugging-pipe` and loads the extension
 over the DevTools protocol.
+
+**That requires a separate profile.** Chrome 136+ ignores both
+`--remote-debugging-pipe` and `--remote-debugging-port` on the default user data
+directory — anti-malware hardening, since CDP on a logged-in profile can read
+cookies and passwords. Perch therefore runs Chrome on its own profile under
+`~/Library/Application Support/Perch/ChromeProfile`. Signing in there is a
+one-time cost, and your everyday Chrome is never touched or quit: the two run
+side by side.
+
+One consequence worth knowing: Chrome resolves user-level native-messaging
+manifests relative to the *user data directory*, so the bridge manifest is
+installed into that profile as well as the default one.
 
 **On the pipe, specifically.** The `--remote-debugging-port` variant opens a
 localhost listener that *any* local process can connect to and use to read your
@@ -123,6 +135,32 @@ every page:
 > The repo must be **public** for this to work — `codeload.github.com` requires
 > authentication for private repos, and embedding a GitHub token in the app
 > would be worse than the problem it solves.
+
+## Clicking through the mirror
+
+Input travels over the same DevTools pipe Perch already holds, via
+`Input.dispatchMouseEvent`. That means no Accessibility permission, no cursor to
+fight over, and Chrome never comes to the front.
+
+The obvious approach — synthesising a `CGEvent` and posting it to Chrome's pid —
+does not work, and it is worth recording why. Measured three ways against the
+same window at the same coordinates:
+
+| Delivery | Page received it |
+|---|---|
+| `CGEvent.postToPid`, Chrome in background | no |
+| `CGEvent.postToPid`, Chrome **frontmost** | no |
+| `CGEvent.post(tap: .cghidEventTap)` | yes, exact coordinates |
+
+Chromium takes mouse input from the window server's event stream, not from
+per-process posted events, so `postToPid` is silently dropped. The global tap
+works but goes wherever the pointer is, which defeats the point of a mirror you
+use while doing something else.
+
+Picking the right tab matters too: Perch matches the page to the mirrored window
+with `Browser.getWindowForTarget`, then picks the active tab among that window's
+by checking `document.visibilityState`. That second step works precisely because
+the extension no longer spoofs visibility.
 
 ## Testing
 
@@ -177,10 +215,8 @@ a no-op that does *not* clear `FD_CLOEXEC`.
 
 ## Known limits
 
-- **Keyboard input is not forwarded** to the mirror. Chrome routes key events by
-  its own key-window state, which makes it unreliable enough that offering it
-  would be a false promise. Clicks and scrolling go through via
-  `CGEvent.postToPid`, which reaches Chrome without pulling it to the front.
+- **Keyboard input is not forwarded.** Clicks and scrolling are.
+- Input reaches **page content only** — not the tab strip or address bar.
 - **Chrome only.** Firefox and Safari are not supported.
 - Chrome started outside Perch won't have the extension.
 - Not sandboxed, not notarized; local-only build.

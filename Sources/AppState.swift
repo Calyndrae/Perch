@@ -54,7 +54,6 @@ final class AppState: ObservableObject {
     /// False once macOS has an answer on file — from then on a prompt is a
     /// silent no-op and Settings is genuinely the only route.
     @Published private(set) var canPromptScreenRecording = true
-    @Published private(set) var canPromptAccessibility = true
     /// After switching Perch on in Settings, the running process still has the
     /// old answer — macOS hands a Screen Recording grant out at launch. So once
     /// we've asked and are still denied, offer the restart that actually fixes it.
@@ -74,7 +73,6 @@ final class AppState: ObservableObject {
     @Published var forwardInput = true {
         didSet { mirrorWindow?.mirrorView.forwardsInput = forwardInput }
     }
-    @Published private(set) var accessibilityGranted = false
     @Published private(set) var isLaunchingChrome = false
     @Published private(set) var extensionVersion: String?
     @Published private(set) var updateStatus: String?
@@ -144,16 +142,14 @@ final class AppState: ObservableObject {
     }
 
     private func tick() {
-        accessibilityGranted = InputForwarder.hasPermission
-        mirrorWindow?.mirrorView.inputPermissionGranted = accessibilityGranted
+        // Nothing to poll: input now goes over the DevTools pipe, so there is
+        // no Accessibility grant to watch for.
     }
 
     // MARK: - Gate
 
     func refreshAll() async {
-        accessibilityGranted = PermissionPrompter.accessibilityGranted
         canPromptScreenRecording = PermissionPrompter.canPromptForScreenRecording
-        canPromptAccessibility = PermissionPrompter.canPromptForAccessibility
         await refreshWindows()
         refreshGate()
     }
@@ -220,11 +216,22 @@ final class AppState: ObservableObject {
             return w
         }()
         window.mirrorView.forwardsInput = forwardInput
-        window.mirrorView.inputPermissionGranted = InputForwarder.hasPermission
+        window.mirrorView.onClick = { [weak self] point, count in
+            guard let self else { return }
+            Task { await self.launcher.forwardClick(at: point, clickCount: count) }
+        }
+        window.mirrorView.onScroll = { [weak self] point, dx, dy in
+            guard let self else { return }
+            Task { await self.launcher.forwardScroll(at: point, deltaX: dx, deltaY: dy) }
+        }
 
         Task {
             do {
                 try await stream.start(windowID: windowID)
+                // Bind input to the tab actually showing in this window.
+                if let w = windows.first(where: { $0.id == windowID }) {
+                    _ = try? await launcher.attachToPage(showingIn: w.frame)
+                }
                 isMirroring = true
                 window.makeKeyAndOrderFront(nil)
             } catch {
@@ -276,16 +283,6 @@ final class AppState: ObservableObject {
 
     /// Shows the system dialog, which has its own "Open System Settings"
     /// button. Opening Settings ourselves as well would bury that dialog.
-    func requestAccessibility() {
-        PermissionPrompter.promptForAccessibility()
-        canPromptAccessibility = PermissionPrompter.canPromptForAccessibility
-        Task { await refreshAll() }
-    }
-
-    func openAccessibilitySettings() {
-        PermissionPrompter.openAccessibilitySettings()
-    }
-
     func openSetupPage() {
         if let url = URL(string: Perch.setupURL) { NSWorkspace.shared.open(url) }
     }

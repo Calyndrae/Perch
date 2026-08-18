@@ -30,6 +30,12 @@ final class ChromeLauncher {
     private var readFD: Int32 = -1
     private var nextID = 0
 
+    /// Persists across calls on purpose. A reply can arrive split over two
+    /// reads, and once a page target is attached CDP streams events constantly
+    /// — so a per-call buffer drops the tail of a message and desynchronises
+    /// the stream, after which every subsequent request times out.
+    private var readBuffer = Data()
+
     private(set) var loadedExtensionID: String?
 
     /// The freshest verified extension: the GitHub copy if we have one,
@@ -153,6 +159,12 @@ final class ChromeLauncher {
         chromePID = pid
         writeFD = toChrome[1]
         readFD = fromChrome[0]
+
+        // Without O_NONBLOCK, read() parks the thread forever when Chrome has
+        // nothing to say, so receive()'s deadline can never be evaluated and a
+        // missed reply hangs instead of timing out.
+        let flags = fcntl(readFD, F_GETFL, 0)
+        _ = fcntl(readFD, F_SETFL, flags | O_NONBLOCK)
     }
 
     /// Waits for the spawned process to be alive and its CDP pipe to answer,
@@ -223,23 +235,23 @@ final class ChromeLauncher {
         }
     }
 
-    private func receive(matching id: Int, timeout: TimeInterval = 20) async throws -> [String: Any]? {
-        var buffer = Data()
+    private func receive(matching id: Int, timeout: TimeInterval = 15) async throws -> [String: Any]? {
         let deadline = Date().addingTimeInterval(timeout)
 
         while Date() < deadline {
             var chunk = [UInt8](repeating: 0, count: 65536)
             let n = read(readFD, &chunk, chunk.count)
             if n <= 0 {
-                try await Task.sleep(nanoseconds: 100_000_000)
+                // EAGAIN just means "nothing yet" on a non-blocking fd.
+                try await Task.sleep(nanoseconds: 20_000_000)
                 continue
             }
-            buffer.append(contentsOf: chunk[0..<n])
+            readBuffer.append(contentsOf: chunk[0..<n])
 
             // Drain every complete NUL-delimited message in the buffer.
-            while let terminator = buffer.firstIndex(of: 0) {
-                let messageData = buffer[buffer.startIndex..<terminator]
-                buffer = buffer[buffer.index(after: terminator)...]
+            while let terminator = readBuffer.firstIndex(of: 0) {
+                let messageData = readBuffer[readBuffer.startIndex..<terminator]
+                readBuffer = Data(readBuffer[readBuffer.index(after: terminator)...])
                 if let obj = try? JSONSerialization.jsonObject(with: messageData) as? [String: Any],
                    obj["id"] as? Int == id {
                     return obj
@@ -247,6 +259,140 @@ final class ChromeLauncher {
             }
         }
         return nil
+    }
+
+    // MARK: - Input forwarding
+    //
+    // CGEvent.postToPid does NOT reach Chrome — verified: a click posted to the
+    // window's own pid is ignored even with Chrome frontmost, while the same
+    // click via the global HID tap lands exactly. Chromium takes mouse input
+    // from the window server's stream, not from per-process posted events.
+    //
+    // Since we already hold a CDP pipe to this Chrome, dispatching input over it
+    // is better in every way: it needs no Accessibility permission, it never
+    // pulls Chrome to the front, and it addresses the page directly so there is
+    // no cursor to fight over. It reaches page content only, not the tab strip
+    // or address bar — which is what the mirror is for anyway.
+
+    private var pageSession: String?
+    private var viewportOffset: CGPoint?
+    private var viewportSize: CGSize?
+
+    /// Attaches to the page that is actually showing in `windowFrame`, so
+    /// clicks land in the tab you are looking at.
+    ///
+    /// Two steps, because neither alone is enough: `Browser.getWindowForTarget`
+    /// identifies which Chrome window a tab belongs to, and `visibilityState`
+    /// picks the active tab out of that window's several. The second step works
+    /// precisely because Perch's extension no longer spoofs visibility.
+    @discardableResult
+    func attachToPage(showingIn windowFrame: CGRect) async throws -> Bool {
+        let targets = try await call("Target.getTargets")
+        let infos = ((targets?["result"] as? [String: Any])?["targetInfos"] as? [[String: Any]]) ?? []
+        let pages = infos.filter {
+            ($0["type"] as? String) == "page"
+            && !(($0["url"] as? String) ?? "").hasPrefix("devtools://")
+        }
+
+        var fallback: String?
+        for page in pages {
+            guard let id = page["targetId"] as? String else { continue }
+
+            // Is this tab in the window we are mirroring?
+            if !windowFrame.isEmpty {
+                let win = try? await call("Browser.getWindowForTarget", ["targetId": id])
+                if let bounds = ((win?["result"] as? [String: Any])?["bounds"] as? [String: Any]),
+                   let left = bounds["left"] as? Double, let top = bounds["top"] as? Double {
+                    let matches = abs(left - windowFrame.minX) < 8 && abs(top - windowFrame.minY) < 8
+                    if !matches { continue }
+                }
+            }
+
+            let attach = try await call("Target.attachToTarget", ["targetId": id, "flatten": true])
+            guard let session = (attach?["result"] as? [String: Any])?["sessionId"] as? String
+            else { continue }
+            fallback = fallback ?? session
+
+            let ev = try? await call("Runtime.evaluate",
+                                     ["expression": "document.visibilityState",
+                                      "returnByValue": true], sessionId: session)
+            let state = ((ev?["result"] as? [String: Any])?["result"] as? [String: Any])?["value"] as? String
+            if state == "visible" {
+                pageSession = session
+                try await refreshViewportGeometry()
+                return true
+            }
+        }
+
+        guard let session = fallback else { return false }
+        pageSession = session
+        try await refreshViewportGeometry()
+        return true
+    }
+
+    /// The page viewport's position on screen, so mirror coordinates can be
+    /// converted into the page-relative ones CDP expects.
+    private func refreshViewportGeometry() async throws {
+        guard let session = pageSession else { return }
+        let js = """
+        JSON.stringify({sx: window.screenX, sy: window.screenY,
+                        iw: window.innerWidth, ih: window.innerHeight,
+                        ow: window.outerWidth, oh: window.outerHeight})
+        """
+        let ev = try await call("Runtime.evaluate",
+                                ["expression": js, "returnByValue": true], sessionId: session)
+        guard let raw = ((ev?["result"] as? [String: Any])?["result"] as? [String: Any])?["value"] as? String,
+              let data = raw.data(using: .utf8),
+              let g = try? JSONSerialization.jsonObject(with: data) as? [String: Double]
+        else { return }
+
+        let borders = ((g["ow"] ?? 0) - (g["iw"] ?? 0)) / 2       // side chrome, usually 0
+        let chromeHeight = (g["oh"] ?? 0) - (g["ih"] ?? 0)         // tab strip + omnibox
+        viewportOffset = CGPoint(x: (g["sx"] ?? 0) + borders,
+                                 y: (g["sy"] ?? 0) + chromeHeight)
+        viewportSize = CGSize(width: g["iw"] ?? 0, height: g["ih"] ?? 0)
+        NSLog("%@", "[Perch] viewport origin=\(viewportOffset!) size=\(viewportSize!)")
+    }
+
+    /// Converts a global screen point into page-viewport coordinates.
+    /// Returns nil when the point is outside the page area (browser chrome).
+    private func viewportPoint(for global: CGPoint) -> CGPoint? {
+        guard let origin = viewportOffset, let size = viewportSize else { return nil }
+        let p = CGPoint(x: global.x - origin.x, y: global.y - origin.y)
+        guard p.x >= 0, p.y >= 0, p.x <= size.width, p.y <= size.height else { return nil }
+        return p
+    }
+
+    func forwardClick(at global: CGPoint, clickCount: Int = 1) async {
+        guard let session = pageSession, let p = viewportPoint(for: global) else { return }
+        for type in ["mousePressed", "mouseReleased"] {
+            do {
+                // Doubles, not CGFloat: JSONSerialization is picky about types
+                // it does not recognise as NSNumber.
+                _ = try await call("Input.dispatchMouseEvent", [
+                    "type": type,
+                    "x": Double(p.x), "y": Double(p.y),
+                    "button": "left",
+                    "buttons": type == "mousePressed" ? 1 : 0,
+                    "clickCount": clickCount,
+                ], sessionId: session)
+            } catch {
+                NSLog("%@", "[Perch] click dispatch failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func forwardScroll(at global: CGPoint, deltaX: Double, deltaY: Double) async {
+        guard let session = pageSession, let p = viewportPoint(for: global) else { return }
+        do {
+            _ = try await call("Input.dispatchMouseEvent", [
+                "type": "mouseWheel",
+                "x": Double(p.x), "y": Double(p.y),
+                "deltaX": deltaX, "deltaY": deltaY,
+            ], sessionId: session)
+        } catch {
+            NSLog("%@", "[Perch] scroll dispatch failed: \(error.localizedDescription)")
+        }
     }
 
     func shutdown() {

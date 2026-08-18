@@ -53,9 +53,11 @@ final class MirrorView: NSView {
     /// When false the mirror is view-only and clicks do nothing.
     var forwardsInput = true
 
-    /// Set by AppState; when false we show the "click to enable" affordance
-    /// instead of silently swallowing clicks.
-    var inputPermissionGranted = false
+    /// Where input goes. Set by AppState, which routes it over the DevTools
+    /// pipe. Synthetic CGEvents were tried first and do not work: Chromium
+    /// ignores mouse events posted to its pid even when frontmost.
+    var onClick: ((CGPoint, Int) -> Void)?
+    var onScroll: ((CGPoint, Double, Double) -> Void)?
 
     /// Top-left origin makes the math line up with CoreGraphics global
     /// coordinates, which is what CGEvent wants.
@@ -107,28 +109,24 @@ final class MirrorView: NSView {
                        y: src.origin.y + fy * src.height)
     }
 
-    private func relay(_ event: NSEvent, as action: InputForwarder.Action) {
-        guard forwardsInput, inputPermissionGranted, stream.sourcePID != 0 else { return }
-        let local = convert(event.locationInWindow, from: nil)
-        guard let global = globalPoint(for: local) else { return }
-        InputForwarder.send(action, at: global, toPID: stream.sourcePID, event: event)
+    private func globalPoint(from event: NSEvent) -> CGPoint? {
+        guard forwardsInput else { return nil }
+        return globalPoint(for: convert(event.locationInWindow, from: nil))
     }
 
-    override func mouseDown(with event: NSEvent)      { relay(event, as: .leftDown) }
-    override func mouseUp(with event: NSEvent)        { relay(event, as: .leftUp) }
-    override func mouseDragged(with event: NSEvent)   { relay(event, as: .leftDrag) }
-    override func rightMouseDown(with event: NSEvent) { relay(event, as: .rightDown) }
-    override func rightMouseUp(with event: NSEvent)   { relay(event, as: .rightUp) }
-    override func mouseMoved(with event: NSEvent)     { relay(event, as: .move) }
-    override func scrollWheel(with event: NSEvent)    { relay(event, as: .scroll) }
+    // The click is sent on mouseUp so a click-to-focus on the mirror window
+    // doesn't also fire into the page.
+    override func mouseUp(with event: NSEvent) {
+        guard let p = globalPoint(from: event) else { return }
+        onClick?(p, max(1, event.clickCount))
+    }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(
-            rect: bounds,
-            options: [.mouseMoved, .activeAlways, .inVisibleRect],
-            owner: self))
+    override func scrollWheel(with event: NSEvent) {
+        guard let p = globalPoint(from: event) else { return }
+        // AppKit reports scrolling deltas inverted relative to page scrolling.
+        let scale = event.hasPreciseScrollingDeltas ? 1.0 : 16.0
+        onScroll?(p, -Double(event.scrollingDeltaX) * scale,
+                     -Double(event.scrollingDeltaY) * scale)
     }
 
     override var acceptsFirstResponder: Bool { true }
