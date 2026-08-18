@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Screen grab test</title>
+<style>body{background:#0f0f0f;color:#eee;font:14px/1.6 system-ui;margin:0;padding:24px}
+code{color:#9ad;font-family:ui-monospace,Menlo,monospace}
+#out{white-space:pre-wrap;background:#1a1a1a;padding:14px;border-radius:8px;margin-top:14px}
+button{background:#ff0033;color:#fff;border:0;border-radius:20px;padding:10px 20px;font-weight:600;cursor:pointer}
+video{max-width:420px;margin-top:14px;border-radius:8px;border:1px solid #333}</style></head>
+<body>
+<h2>Hostile screen-grab test</h2>
+<p>Mimics a site that asks to record your screen, then keeps the recording.</p>
+<button onclick="grab()">Share your screen</button>
+<div id="out">idle</div>
+<video id="v" autoplay muted playsinline></video>
+<script>
+async function grab() {
+  const out = document.getElementById('out');
+  try {
+    const s = await navigator.mediaDevices.getDisplayMedia({video:true, audio:true});
+    const t = s.getVideoTracks()[0];
+    const st = t.getSettings();
+    document.getElementById('v').srcObject = s;
+    window.__grab = {
+      ok: true,
+      label: t.label,
+      surface: st.displaySurface || '(none)',
+      width: st.width, height: st.height,
+      audioTracks: s.getAudioTracks().length
+    };
+    out.textContent = JSON.stringify(window.__grab, null, 1);
+  } catch (e) {
+    window.__grab = {ok:false, name:e.name, message:e.message};
+    out.textContent = JSON.stringify(window.__grab, null, 1);
+  }
+}
+</script></body></html>
