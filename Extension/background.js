@@ -11,6 +11,7 @@
 
 const HOST = 'com.trixarh.perch.bridge';
 const SCRIPT_ID = 'perch-inject';
+const BRIDGE_ID = 'perch-bridge-relay';
 const SETUP_URL = 'https://github.com/Calyndrae/Perch';
 
 let port = null;
@@ -22,15 +23,28 @@ async function startInjecting() {
   if (injecting) return;
   try {
     await chrome.scripting.unregisterContentScripts({ ids: [SCRIPT_ID] }).catch(() => {});
-    await chrome.scripting.registerContentScripts([{
-      id: SCRIPT_ID,
-      js: ['inject.js'],
-      matches: ['<all_urls>'],
-      runAt: 'document_start',
-      world: 'MAIN',
-      allFrames: true,
-      persistAcrossSessions: false,
-    }]);
+    await chrome.scripting.unregisterContentScripts({ ids: [BRIDGE_ID] }).catch(() => {});
+    await chrome.scripting.registerContentScripts([
+      {
+        id: SCRIPT_ID,
+        js: ['inject.js'],
+        matches: ['<all_urls>'],
+        runAt: 'document_start',
+        world: 'MAIN',
+        allFrames: true,
+        persistAcrossSessions: false,
+      },
+      {
+        // Same timing, but the isolated world, so it can reach chrome.*.
+        id: BRIDGE_ID,
+        js: ['bridge.js'],
+        matches: ['<all_urls>'],
+        runAt: 'document_start',
+        world: 'ISOLATED',
+        allFrames: true,
+        persistAcrossSessions: false,
+      },
+    ]);
     injecting = true;
     warned = false;
     await injectIntoOpenTabs();
@@ -65,6 +79,12 @@ async function injectIntoOpenTabs() {
         world: 'MAIN',
         injectImmediately: true,
       });
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        files: ['bridge.js'],
+        world: 'ISOLATED',
+        injectImmediately: true,
+      });
     } catch (_) {
       // chrome:// pages, the Web Store and similar refuse injection by design.
     }
@@ -74,6 +94,7 @@ async function injectIntoOpenTabs() {
 async function stopInjecting(reason) {
   if (injecting) {
     await chrome.scripting.unregisterContentScripts({ ids: [SCRIPT_ID] }).catch(() => {});
+    await chrome.scripting.unregisterContentScripts({ ids: [BRIDGE_ID] }).catch(() => {});
     injecting = false;
   }
   console.log('[Perch] inert —', reason);
@@ -158,6 +179,35 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== RECONNECT_ALARM) return;
   ensureReconnectAlarm();
   if (!port) connect();
+});
+
+// A site asking to record the screen gets its own tab back instead.
+//
+// chrome.tabCapture.getMediaStreamId is the only way to produce a capture
+// stream with no picker, and it is only callable from here. targetTabId and
+// consumerTabId are both the asking tab, so the id captures that tab and is
+// usable only by that tab — it cannot be passed elsewhere to grab something
+// else. The id also expires within seconds if unused.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.type !== 'perch:tab-stream-request') return;
+  const tabId = sender.tab && sender.tab.id;
+  if (!tabId) { sendResponse({ error: 'no tab' }); return; }
+  if (!injecting) { sendResponse({ error: 'perch inactive' }); return; }
+
+  try {
+    chrome.tabCapture.getMediaStreamId(
+      { targetTabId: tabId, consumerTabId: tabId },
+      (streamId) => {
+        if (chrome.runtime.lastError) {
+          sendResponse({ error: chrome.runtime.lastError.message });
+        } else {
+          sendResponse({ streamId });
+        }
+      });
+  } catch (err) {
+    sendResponse({ error: String(err) });
+  }
+  return true;   // reply is async
 });
 
 chrome.runtime.onStartup.addListener(connect);

@@ -174,6 +174,77 @@
     try { guardHandlerProperty(proto, 'onmousemove', 'mousemove'); } catch (_) {}
   }
 
+  // ---- Screen sharing --------------------------------------------------
+  // A site asking to record your screen gets ITS OWN TAB back, always.
+  //
+  // Chrome's picker is what lets a site end up with your whole display, and
+  // once granted it keeps seeing whatever you switch to. Replacing
+  // getDisplayMedia means the picker never appears and the answer is never
+  // negotiable: the site receives a live stream of the page that asked, and
+  // nothing else on screen is capturable by it.
+  //
+  // The stream itself comes from chrome.tabCapture via bridge.js, because only
+  // an extension can mint a capture stream without a picker.
+  if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+    const REQUEST = 'perch:tab-stream-request';
+    const RESPONSE = 'perch:tab-stream-response';
+    const nativeGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+
+    const requestTabStreamID = () => new Promise((resolve, reject) => {
+      const nonce = String(Math.random()) + String(Date.now());
+      const timer = setTimeout(() => {
+        window.removeEventListener('message', onReply);
+        reject(new Error('timeout'));
+      }, 5000);
+
+      function onReply(event) {
+        const d = event.data;
+        if (event.source !== window || !d || d.type !== RESPONSE || d.nonce !== nonce) return;
+        clearTimeout(timer);
+        window.removeEventListener('message', onReply);
+        d.streamId ? resolve(d.streamId) : reject(new Error(d.error || 'no stream'));
+      }
+      window.addEventListener('message', onReply);
+      window.postMessage({ type: REQUEST, nonce }, '*');
+    });
+
+    const patchedGetDisplayMedia = function getDisplayMedia(constraints) {
+      return requestTabStreamID().then((streamId) => nativeGetUserMedia({
+        // The legacy constraint form is the only one that accepts a tab
+        // capture stream id.
+        video: {
+          mandatory: {
+            chromeMediaSource: 'tab',
+            chromeMediaSourceId: streamId,
+            // Keep it sharp; tab capture otherwise defaults low.
+            maxWidth: window.screen.width,
+            maxHeight: window.screen.height,
+            maxFrameRate: 60,
+          },
+        },
+        // Audio is left to whatever the site asked for. Requesting tab audio
+        // here would silence the tab for the user, which is worse than the
+        // site simply not getting sound.
+        audio: false,
+      })).catch((err) => {
+        // Fail closed. Falling back to the real picker would hand the site the
+        // screen-grab we exist to prevent.
+        throw new DOMException(
+          'Permission denied by system', 'NotAllowedError');
+      });
+    };
+    asNative(patchedGetDisplayMedia, 'getDisplayMedia');
+    try {
+      Object.defineProperty(navigator.mediaDevices, 'getDisplayMedia', {
+        configurable: true,
+        writable: true,
+        value: patchedGetDisplayMedia,
+      });
+    } catch (_) {
+      try { navigator.mediaDevices.getDisplayMedia = patchedGetDisplayMedia; } catch (_) {}
+    }
+  }
+
   // Nothing is defined on `document` itself: patching the instance rather than
   // the prototype leaves Object.hasOwn(document, …) true, which no real browser
   // does. Not applicable to the properties above, but the rule holds generally.
