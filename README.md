@@ -36,6 +36,22 @@ That's it. On first run Perch:
 3. offers **Set Up Chrome Now**, which restarts Chrome with the extension
    already loaded.
 
+## Packaging
+
+```bash
+./make-dmg.sh
+```
+
+Produces `build/Perch-<version>.dmg` — drag-to-Applications, with a READ ME
+covering the Gatekeeper step.
+
+Because this is signed with a local self-signed identity rather than a
+Developer ID, and isn't notarized, macOS will refuse it on first open once the
+file has picked up a quarantine flag from a download or transfer. Right-click →
+Open once, or `xattr -dr com.apple.quarantine /Applications/Perch.app`. On
+another person's Mac it will be blocked outright — this is a personal build,
+not a distributable one.
+
 ## Permissions
 
 Perch asks macOS itself rather than telling you to go hunting in System
