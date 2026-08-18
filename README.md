@@ -1,0 +1,155 @@
+# Perch
+
+Mirror one Chrome window into a floating macOS window, and kill the
+leaving-the-page nags.
+
+Two pieces that only work together:
+
+- **Perch.app** — captures a single Chrome window with ScreenCaptureKit and
+  shows it in a floating, clickable window. Because the mirror is an ordinary
+  app window, you can share *it* to a website instead of your screen, and the
+  site only ever sees that one Chrome window.
+- **Perch Bridge** (Chrome extension, no UI) — blocks exit-intent popups and
+  unload prompts.
+
+## Scope
+
+The extension deliberately does **not** touch `document.hidden`,
+`visibilityState`, `hasFocus()`, `visibilitychange` or `blur`. A separate
+extension owns page visibility, and two extensions fighting over the same
+accessors is how you get a page that behaves differently on every reload.
+
+Perch's half is the nags: the exit-intent popup, and the "are you sure you want
+to leave" prompt.
+
+## Setup
+
+```bash
+cd ~/GIT/Perch && ./build.sh && open build/Perch.app
+```
+
+That's it. On first run Perch:
+
+1. registers its native-messaging host (re-registers on every launch, so moving
+   the app fixes itself instead of silently breaking),
+2. pulls the newest extension from GitHub,
+3. offers **Set Up Chrome Now**, which restarts Chrome with the extension
+   already loaded.
+
+Grant **Screen Recording** once when asked. **Accessibility** is optional, and
+only needed to click and scroll inside the mirror.
+
+## Why Perch has to launch Chrome
+
+Chrome has closed every other route on macOS. Measured against Chrome 151:
+
+| Method | Result |
+|---|---|
+| External-extensions JSON + local `.crx` | Blocked on macOS since Chrome 44 |
+| `--load-extension` | Removed from branded Chrome in 137 |
+| `ExtensionInstallForcelist` + self-hosted URL | Refused — *"this computer is not enterprise-managed, so policy can only install extensions from the Chrome Web Store"* |
+| `ExtensionInstallForcelist` + Web Store | Works, but requires publishing |
+| **CDP `Extensions.loadUnpacked`** | **Works** — the Chromium-sanctioned replacement for `--load-extension` |
+
+So Perch spawns Chrome with `--remote-debugging-pipe` and loads the extension
+over the DevTools protocol.
+
+**On the pipe, specifically.** The `--remote-debugging-port` variant opens a
+localhost listener that *any* local process can connect to and use to read your
+cookies and drive your browser. The pipe variant talks over inherited file
+descriptors 3 and 4, so only Perch can ever speak to that Chrome. Verified with
+`lsof`: no TCP listener is opened.
+
+The cost: the extension lives only in Chrome sessions Perch started. Launch
+Chrome from the Dock and Perch will offer to restart it.
+
+## Self-updating
+
+The extension is fetched from `Calyndrae/Perch` on GitHub, so a fix ships
+without rebuilding the app. Because this downloads code that Chrome then runs on
+every page:
+
+- **HTTPS only** — any other scheme is refused outright.
+- **Identity is verified.** The downloaded manifest's `key` is SHA-256'd and must
+  derive exactly the extension ID Perch was built against
+  (`bgcnjnfhpcimijankdloldghafhjaami`). A different key is a different extension
+  and is rejected, not loaded. This is also what keeps the native-messaging
+  `allowed_origins` entry valid.
+- **Perch never executes any of it**; it only hands Chrome a directory.
+- **The copy inside Perch.app is kept as a fallback**, so a failed download, an
+  offline machine or a tampered payload degrades to the known-good version
+  rather than to nothing. Tested against a 404.
+
+> The repo must be **public** for this to work — `codeload.github.com` requires
+> authentication for private repos, and embedding a GitHub token in the app
+> would be worse than the problem it solves.
+
+## Testing
+
+```bash
+./TestSite/serve.sh
+```
+
+- `http://localhost:8765/TestSite/` — needs the extension actually loaded
+- `?simulate=1` — loads the real `Extension/inject.js` directly, so you can
+  exercise the payload without installing anything
+
+`VidTube` is a deliberately hostile video page: exit-intent popup, unload
+prompt, pause-on-leave, "are you still watching?", **and an active anti-spoof
+scan** that throws an adblock-style "close the app to continue" wall when it
+catches you patching. Probes are grouped by whose job they are, so a CAUGHT in
+*Not Perch's job* is expected rather than a failure.
+
+Current state: **10/10 clean** on Perch's own probes and the anti-spoof scan.
+
+## The mutual gate
+
+Neither half runs alone, by design.
+
+- The extension opens a long-lived native-messaging port to `PerchBridge`. No
+  app → it never registers its content script and goes completely inert.
+- That same port is how Perch knows the extension exists. No connection → Perch
+  shows a setup screen instead of mirroring.
+
+The extension has no popup and no options page. Its one visible surface is a
+single notification when the app is missing, because at that point there is
+nothing else left to tell you why nothing is happening.
+
+## Signing
+
+`scripts/sign-macos.sh` is taken unchanged from RemielleDesktopAgent, and its
+reasoning applies exactly here. Ad-hoc signatures change every build, and TCC
+keys its grants to the signature — so every rebuild would revoke Screen
+Recording. The stable self-signed identity gives every build the same designated
+requirement (`identifier "com.trixarh.perch" and certificate leaf = H"fe409f80…"`)
+— the *certificate* hash, not the build hash. Grant Screen Recording once and
+rebuilds keep it.
+
+## Build notes
+
+No Xcode on this machine, only Command Line Tools. `build.sh` compiles with
+`swiftc` and assembles the `.app` by hand. Nothing needs `xcodebuild`.
+
+Two fd traps are handled in `ChromeLauncher.spawnChrome`, both of which silently
+break the pipe if you get them wrong: `pipe()` hands out low fds so a plain
+`close()` can kill an fd a previous `dup2` just installed, and `dup2(fd, fd)` is
+a no-op that does *not* clear `FD_CLOEXEC`.
+
+## Known limits
+
+- **Keyboard input is not forwarded** to the mirror. Chrome routes key events by
+  its own key-window state, which makes it unreliable enough that offering it
+  would be a false promise. Clicks and scrolling go through via
+  `CGEvent.postToPid`, which reaches Chrome without pulling it to the front.
+- **Chrome only.** Firefox and Safari are not supported.
+- Chrome started outside Perch won't have the extension.
+- Not sandboxed, not notarized; local-only build.
+
+## Measured, for the record
+
+Covering a Chrome window does **not** throttle it on macOS — it stays at 60fps,
+so the mirror stays live behind Discord with no configuration at all. Switching
+to a different **tab** drops the page to 0fps. That distinction matters if you
+run a visibility-spoofing extension: a site can check "claims visible but isn't
+animating", and a background tab gives that away. Give the page you're mirroring
+its own Chrome window and leave that window's tab alone.
