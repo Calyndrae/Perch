@@ -31,8 +31,14 @@ enum PermissionPrompter {
         UserDefaults.standard.bool(forKey: Key.askedScreenRecording)
     }
 
-    /// True when a dialog can still appear. Once macOS has an answer on file,
-    /// asking again is a silent no-op and we must say so rather than pretending.
+    /// Whether we've asked before. This is a HINT for wording only — never a
+    /// gate on whether to ask.
+    ///
+    /// Our flag and TCC's actual record drift apart the moment a user dismisses
+    /// the dialog without choosing: TCC stores no answer, so macOS would still
+    /// show the box, but our flag says "asked". Gating on it stranded the app
+    /// with no way back. Asking when already answered is a harmless no-op, so
+    /// the safe direction is to always ask.
     static var canPromptForScreenRecording: Bool {
         !screenRecordingGranted && !hasAskedForScreenRecording
     }

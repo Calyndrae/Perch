@@ -25,6 +25,19 @@ enum Perch {
         return base.appendingPathComponent("Perch", isDirectory: true)
     }
 
+    /// Perch runs Chrome on its own profile.
+    ///
+    /// Not a preference — Chrome 136+ refuses `--remote-debugging-pipe` on the
+    /// default user data directory (an anti-malware hardening, since CDP on a
+    /// logged-in profile can read cookies and passwords). A non-default profile
+    /// is the only way an app may drive Chrome at all, and driving it is the
+    /// only way left to install the extension.
+    ///
+    /// It persists, so signing in here is a one-time cost.
+    static var chromeProfilePath: String {
+        supportDirectory.appendingPathComponent("ChromeProfile", isDirectory: true).path
+    }
+
     static var bridgeSocketPath: String {
         supportDirectory.appendingPathComponent("bridge.sock").path
     }

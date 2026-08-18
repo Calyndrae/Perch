@@ -29,11 +29,19 @@ enum BridgeHostInstaller {
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask)[0]
 
+        // Chrome resolves user-level native-messaging manifests relative to the
+        // *user data directory*, not to a fixed system path. Perch runs Chrome
+        // on its own profile, so that profile needs its own copy — installing
+        // only into the default location leaves connectNative failing with the
+        // extension loaded and no clue why.
+        var targets: [URL] = [URL(fileURLWithPath: Perch.chromeProfilePath)]
         for browser in ["Google/Chrome", "Chromium", "Google/Chrome Beta", "Google/Chrome Canary"] {
             let base = support.appendingPathComponent(browser, isDirectory: true)
             // Only register for browsers actually installed, so we don't litter.
-            guard FileManager.default.fileExists(atPath: base.path) else { continue }
+            if FileManager.default.fileExists(atPath: base.path) { targets.append(base) }
+        }
 
+        for base in targets {
             let dir = base.appendingPathComponent("NativeMessagingHosts", isDirectory: true)
             let file = dir.appendingPathComponent("\(Perch.nativeHostName).json")
 

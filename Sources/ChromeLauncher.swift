@@ -42,13 +42,15 @@ final class ChromeLauncher {
 
     // MARK: - Launch
 
-    /// Quits any running Chrome, then starts a fresh one with the extension in
-    /// place. Quitting is destructive enough that callers confirm first.
-    /// `extraArguments` exists so the launcher can be exercised against a
-    /// throwaway `--user-data-dir` without disturbing a real Chrome session.
+    /// Starts Perch's own Chrome with the extension already loaded.
+    ///
+    /// Your everyday Chrome is left completely alone: because Perch uses a
+    /// separate profile, the two run side by side and nothing needs quitting.
+    ///
+    /// `extraArguments` exists so tests can point at a throwaway profile.
     func relaunchChromeWithExtension(
         extraArguments: [String] = [],
-        quitExisting: Bool = true
+        quitExisting: Bool = false
     ) async throws -> String {
         guard let extensionPath = Self.extensionPath,
               FileManager.default.fileExists(atPath: extensionPath + "/manifest.json") else {
@@ -118,15 +120,26 @@ final class ChromeLauncher {
         posix_spawn_file_actions_adddup2(&actions, childWrite, 4)
 
         let executable = Perch.chromeAppPath + "/Contents/MacOS/Google Chrome"
-        let args = [
+        // --user-data-dir is mandatory, not stylistic: Chrome 136+ ignores
+        // --remote-debugging-pipe entirely on the default profile.
+        var args = [
             executable,
             "--remote-debugging-pipe",
             "--no-first-run",
             "--no-default-browser-check",
-        ] + extraArguments
+        ]
+        if !extraArguments.contains(where: { $0.hasPrefix("--user-data-dir") }) {
+            args.append("--user-data-dir=\(Perch.chromeProfilePath)")
+        }
+        args += extraArguments
         var cArgs: [UnsafeMutablePointer<CChar>?] = args.map { strdup($0) }
         cArgs.append(nil)
         defer { cArgs.forEach { free($0) } }
+
+        // Chrome is extremely chatty on stderr and would otherwise bury
+        // Perch's own logging in its updater output.
+        posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0)
+        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
 
         var pid: pid_t = 0
         let rc = posix_spawn(&pid, executable, &actions, nil, &cArgs, environ)
@@ -166,14 +179,15 @@ final class ChromeLauncher {
     //
     // Framing is one JSON object per message, NUL-terminated.
 
-    private func loadUnpacked(path: String) async throws -> String {
+    /// One CDP request, awaited to its matching reply.
+    @discardableResult
+    func call(_ method: String,
+              _ params: [String: Any] = [:],
+              sessionId: String? = nil) async throws -> [String: Any]? {
         nextID += 1
         let id = nextID
-        let request: [String: Any] = [
-            "id": id,
-            "method": "Extensions.loadUnpacked",
-            "params": ["path": path],
-        ]
+        var request: [String: Any] = ["id": id, "method": method, "params": params]
+        if let sessionId { request["sessionId"] = sessionId }
         try send(request)
 
         guard let reply = try await receive(matching: id) else {
@@ -183,7 +197,12 @@ final class ChromeLauncher {
            let message = error["message"] as? String {
             throw LaunchError.cdpError(message)
         }
-        guard let result = reply["result"] as? [String: Any],
+        return reply
+    }
+
+    private func loadUnpacked(path: String) async throws -> String {
+        let reply = try await call("Extensions.loadUnpacked", ["path": path])
+        guard let result = reply?["result"] as? [String: Any],
               let extensionID = result["id"] as? String else {
             throw LaunchError.noResponse
         }
@@ -256,7 +275,9 @@ final class ChromeLauncher {
             case .chromeWouldNotQuit:
                 return "Chrome didn’t quit. Close it yourself, then try again."
             case .chromeDidNotStart:
-                return "Chrome didn’t start."
+                return "Chrome started but never answered. If it opened on your "
+                     + "normal profile, the debugging channel was refused — Perch "
+                     + "must run Chrome on its own profile."
             case .pipeFailed(let e):  return "Could not open a pipe to Chrome (errno \(e))"
             case .spawnFailed(let e): return "Could not start Chrome (error \(e))"
             case .writeFailed(let e): return "Lost the connection to Chrome (errno \(e))"

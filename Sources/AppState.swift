@@ -125,10 +125,12 @@ final class AppState: ObservableObject {
 
         Task {
             await refreshAll()
-            // Ask straight away, while asking still puts a dialog on screen.
-            // Waiting for a button press spends the one prompt macOS allows on
-            // a moment the user may never reach.
-            if PermissionPrompter.canPromptForScreenRecording {
+            // Ask every launch while the permission is missing. Calling this
+            // when macOS already has an answer is a silent no-op, so there is
+            // no cost — whereas gating it on our own "have we asked" flag
+            // strands the app permanently if the user ever dismissed the box
+            // without answering it.
+            if !screenRecordingGranted {
                 requestScreenRecording()
             }
         }

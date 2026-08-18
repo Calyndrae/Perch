@@ -33,9 +33,41 @@ async function startInjecting() {
     }]);
     injecting = true;
     warned = false;
+    await injectIntoOpenTabs();
+    // Second sweep closes a startup race: Chrome may still be opening restored
+    // tabs while we register, and a tab created in that window is covered by
+    // neither the first sweep nor registerContentScripts.
+    setTimeout(injectIntoOpenTabs, 2500);
     console.log('[Perch] app connected — protection active');
   } catch (err) {
     console.warn('[Perch] could not register content script:', err);
+  }
+}
+
+// registerContentScripts only affects FUTURE navigations, so every tab that was
+// already open when we registered stays unprotected until it reloads. Perch
+// starts Chrome and registers a moment later, so that is the normal case, not an
+// edge case — inject into what is already there.
+//
+// Partial by nature: a page that has already run its own scripts may have
+// registered its exit-intent listener before ours exists. Those tabs are fully
+// covered only after a reload. inject.js is idempotent, so double-covering a tab
+// is harmless.
+async function injectIntoOpenTabs() {
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({}); } catch (_) { return; }
+  for (const tab of tabs) {
+    if (!tab.id) continue;
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        files: ['inject.js'],
+        world: 'MAIN',
+        injectImmediately: true,
+      });
+    } catch (_) {
+      // chrome:// pages, the Web Store and similar refuse injection by design.
+    }
   }
 }
 
@@ -62,6 +94,9 @@ function notifyOnce() {
 }
 
 function connect() {
+  // onStartup, onInstalled and the top-level call can all land in one session;
+  // without this guard each spawns its own native host process.
+  if (port) return;
   try {
     port = chrome.runtime.connectNative(HOST);
   } catch (err) {
