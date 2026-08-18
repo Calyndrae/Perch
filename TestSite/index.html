@@ -198,7 +198,7 @@
      Lets the harness verify inject.js without hand-loading an extension. -->
 <script>
   if (new URLSearchParams(location.search).has('simulate')) {
-    document.write('<script src="/Extension/inject.js"><\/script>');
+    document.write('<script src="../Extension/inject.js"><\/script>');
   }
 </script>
 <script src="hostile.js"></script>

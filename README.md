@@ -178,7 +178,23 @@ scan** that throws an adblock-style "close the app to continue" wall when it
 catches you patching. Probes are grouped by whose job they are, so a CAUGHT in
 *Not Perch's job* is expected rather than a failure.
 
-Current state: **10/10 clean** on Perch's own probes and the anti-spoof scan.
+`exitintent.html` is a second harness: eight ways real libraries detect the
+pointer heading for the tab bar, each registered the way real code registers it.
+It found three holes that the main harness missed — `onmouseleave` assigned as a
+property, `onmouseout` on `body`, and mousemove-toward-the-top-edge tracking —
+all now closed.
+
+Current state: **10/10** on the main harness, **8/8** on the technique matrix,
+with the anti-spoof scan finding nothing.
+
+Two properties worth keeping true when changing `inject.js`:
+
+- **No over-blocking.** Handlers on real elements must still fire at any
+  coordinate, and document-level handlers must still see ordinary movement.
+  Only the exit gesture is dropped.
+- **No instance shadowing.** Patches go on prototypes. Defining `onmouseleave`
+  on `document` or `body` leaves `Object.hasOwn` true there, which no real
+  browser does, and a scanner greps for exactly that.
 
 ## The mutual gate
 

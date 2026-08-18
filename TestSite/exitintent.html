@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Exit-intent technique matrix</title>
+<style>
+  body { background:#0f0f0f; color:#f1f1f1; font:14px/1.5 -apple-system,system-ui,sans-serif;
+         margin:0; padding:24px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  p.sub { color:#aaa; margin:0 0 20px; font-size:13px; }
+  table { width:100%; border-collapse:collapse; max-width:900px; }
+  td,th { padding:9px 12px; border-top:1px solid #303030; text-align:left; vertical-align:top; }
+  th { font-size:11px; letter-spacing:.7px; text-transform:uppercase; color:#aaa; border:0; }
+  .b { display:inline-block; min-width:78px; text-align:center; padding:2px 9px;
+       border-radius:20px; font-size:11px; font-weight:700; }
+  .blocked { background:rgba(46,204,113,.16); color:#2ecc71; }
+  .fired   { background:rgba(255,77,77,.16);  color:#ff4d4d; }
+  code { font-family:ui-monospace,Menlo,monospace; font-size:12px; color:#9ad; }
+  #summary { margin:18px 0 0; font-size:13px; }
+</style>
+</head>
+<body>
+<h1>Exit-intent technique matrix</h1>
+<p class="sub">Each row is a way real sites detect the pointer leaving toward the tab bar.
+<b>BLOCKED</b> means Perch swallowed it.</p>
+
+<table>
+  <thead><tr><th style="width:34%">Technique</th><th style="width:110px">Result</th><th>How it registers</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<p id="summary"></p>
+
+<script>
+  // Same simulate switch as the main harness: load the real extension payload
+  // before any page script, matching document_start in the MAIN world.
+  if (new URLSearchParams(location.search).has('simulate')) {
+    document.write('<script src="../Extension/inject.js"><\/script>');
+  }
+</script>
+<script src="exitintent.js"></script>
+</body>
+</html>
