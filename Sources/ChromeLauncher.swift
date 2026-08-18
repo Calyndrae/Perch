@@ -1,6 +1,14 @@
 import AppKit
 import Foundation
 
+/// Hands TCC responsibility to the spawned process instead of keeping it.
+///
+/// Not public API, but it is the documented-by-practice mechanism every
+/// terminal emulator and launcher uses, and it is stable across macOS releases.
+@_silgen_name("responsibility_spawnattrs_setdisclaim")
+private func responsibility_spawnattrs_setdisclaim(
+    _ attrs: UnsafeMutablePointer<posix_spawnattr_t?>, _ disclaim: Int32) -> Int32
+
 /// Launches Chrome with the extension already loaded, with no clicks from you.
 ///
 /// Every other way of installing an extension from a native app is closed on
@@ -116,6 +124,26 @@ final class ChromeLauncher {
         _ = fcntl(toChrome[1], F_SETFD, FD_CLOEXEC)
         _ = fcntl(fromChrome[0], F_SETFD, FD_CLOEXEC)
 
+        // Disclaim TCC responsibility for the child.
+        //
+        // posix_spawn otherwise makes US the "responsible process" for Chrome,
+        // which means macOS checks PERCH's Info.plist when Chrome touches the
+        // microphone, camera or a protected folder — finds no usage string, and
+        // kills Chrome with EXC_CRASH (SIGABRT). Observed exactly that: Chrome
+        // died the moment a page asked for the mic.
+        //
+        // Disclaiming makes Chrome answer for itself, so its own Info.plist and
+        // its own permission prompts apply, as they would if you had opened
+        // Chrome from the Dock.
+        var attrs: posix_spawnattr_t?
+        posix_spawnattr_init(&attrs)
+        defer { posix_spawnattr_destroy(&attrs) }
+        let disclaimed = responsibility_spawnattrs_setdisclaim(&attrs, 1)
+        if disclaimed != 0 {
+            NSLog("%@", "[Perch] could not disclaim TCC responsibility (\(disclaimed)); "
+                + "Chrome may be killed when it asks for the microphone or camera")
+        }
+
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
@@ -148,7 +176,7 @@ final class ChromeLauncher {
         posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
 
         var pid: pid_t = 0
-        let rc = posix_spawn(&pid, executable, &actions, nil, &cArgs, environ)
+        let rc = posix_spawn(&pid, executable, &actions, &attrs, &cArgs, environ)
         close(toChrome[0]); close(fromChrome[1])
 
         guard rc == 0 else {

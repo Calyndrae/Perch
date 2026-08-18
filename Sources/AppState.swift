@@ -13,7 +13,7 @@ enum GateFailure: Equatable {
         switch self {
         case .screenRecordingDenied: return "Perch needs Screen Recording access"
         case .extensionMissing:      return "The Perch Chrome extension isn’t running"
-        case .chromeNotRunning:      return "Chrome isn’t open"
+        case .chromeNotRunning:      return "Perch hasn’t started Chrome yet"
         }
     }
 
@@ -35,12 +35,17 @@ enum GateFailure: Equatable {
             “are you sure you want to leave?” prompts.
 
             Chrome only lets an app add an extension to a session that app \
-            started itself, so Perch will close Chrome and open it again with \
-            the extension already in place. Chrome restores your tabs as usual, \
-            but anything you’ve typed and not sent will be lost.
+            started itself, so Perch opens a second Chrome with the extension \
+            already in place. It uses its own profile, so your everyday Chrome \
+            keeps running untouched — nothing is closed and no tabs are lost.
+
+            Watch things in that Chrome window, and mirror it from here.
             """
         case .chromeNotRunning:
-            return "Open Google Chrome and Perch will pick it up automatically."
+            return """
+            Perch mirrors the Chrome it starts itself, because that is the only \
+            one carrying the extension. Your everyday Chrome is left alone.
+            """
         }
     }
 }
@@ -65,6 +70,10 @@ final class AppState: ObservableObject {
     @Published private(set) var windows: [CapturableWindow] = []
     @Published var selectedWindowID: CGWindowID?
     @Published private(set) var isMirroring = false
+    /// Which window is on screen in the mirror, so the list can say so.
+    @Published private(set) var mirroredWindowID: CGWindowID?
+    /// True when the Chrome we can actually drive is running.
+    @Published private(set) var managedChromeRunning = false
 
     // Health
     @Published var lastError: String?
@@ -141,9 +150,24 @@ final class AppState: ObservableObject {
         launcher.shutdown()
     }
 
+    private var tickCount = 0
+
     private func tick() {
-        // Nothing to poll: input now goes over the DevTools pipe, so there is
-        // no Accessibility grant to watch for.
+        tickCount += 1
+        managedChromeRunning = launcher.isManagingChrome
+
+        // Chrome windows open, close and get renamed constantly. Leaving the
+        // list stale until someone finds the refresh icon made the app look
+        // broken, so it refreshes itself every couple of seconds.
+        if tickCount % 2 == 0 {
+            Task { await refreshWindows() }
+        }
+
+        // If the managed Chrome went away, stop claiming to mirror it.
+        if isMirroring, !stream.isRunning {
+            isMirroring = false
+            mirroredWindowID = nil
+        }
     }
 
     // MARK: - Gate
@@ -198,8 +222,9 @@ final class AppState: ObservableObject {
                 selectedWindowID = nil
             }
         } catch {
-            lastError = error.localizedDescription
-            windows = []
+            // Quiet on purpose: this now runs on a timer, and a transient
+            // failure should not paint an error banner over a working app.
+            NSLog("%@", "[Perch] window refresh failed: \(error.localizedDescription)")
         }
     }
 
@@ -233,6 +258,7 @@ final class AppState: ObservableObject {
                     _ = try? await launcher.attachToPage(showingIn: w.frame)
                 }
                 isMirroring = true
+                mirroredWindowID = windowID
                 window.makeKeyAndOrderFront(nil)
             } catch {
                 lastError = error.localizedDescription
@@ -244,6 +270,7 @@ final class AppState: ObservableObject {
     func stopMirroring() {
         stream.stop()
         isMirroring = false
+        mirroredWindowID = nil
         mirrorWindow?.orderOut(nil)
     }
 

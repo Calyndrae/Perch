@@ -120,11 +120,25 @@ function connect() {
   try { port.postMessage({ type: 'ping' }); } catch (_) {}
 }
 
+// Reconnecting needs BOTH of these, and neither is sufficient alone.
+//
+// setTimeout is fast but dies with the service worker — and the native port is
+// what was keeping the worker alive, so losing the port is exactly when the
+// worker gets terminated and the pending timer vanishes. Observed: after Perch
+// restarted, the extension never reconnected at all, not even after a minute.
+//
+// chrome.alarms survives termination and wakes the worker back up, but its
+// floor is 30 seconds, which is far too slow to be the only mechanism.
 function scheduleRetry() {
-  // Back off to a minute so a permanently-absent app costs nothing.
-  retryDelay = Math.min(retryDelay * 2, 60000);
+  retryDelay = Math.min(retryDelay * 2, 5000);
   setTimeout(connect, retryDelay);
 }
+
+const RECONNECT_ALARM = 'perch-reconnect';
+chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === RECONNECT_ALARM && !port) connect();
+});
 
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onInstalled.addListener(connect);
