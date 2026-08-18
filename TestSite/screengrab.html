@@ -6,6 +6,7 @@ code{color:#9ad;font-family:ui-monospace,Menlo,monospace}
 button{background:#ff0033;color:#fff;border:0;border-radius:20px;padding:10px 20px;font-weight:600;cursor:pointer}
 video{max-width:420px;margin-top:14px;border-radius:8px;border:1px solid #333}</style></head>
 <body>
+<div id="marker" style="position:fixed;top:0;left:0;right:0;height:14px;background:#ff00cc;z-index:9999"></div>
 <h2>Hostile screen-grab test</h2>
 <p>Mimics a site that asks to record your screen, then keeps the recording.</p>
 <button onclick="grab()">Share your screen</button>
@@ -26,6 +27,28 @@ async function grab() {
       width: st.width, height: st.height,
       audioTracks: s.getAudioTracks().length
     };
+    out.textContent = JSON.stringify(window.__grab, null, 1);
+
+    // Prove what was actually captured: draw a frame and sample it. This page
+    // paints a unique magenta strip at the very top of its own viewport. If the
+    // capture is the tab, the strip is at the top of the frame. If it is the
+    // screen, the top of the frame is the menu bar / Chrome chrome instead.
+    const v = document.getElementById('v');
+    await new Promise(r => v.readyState >= 2 ? r() : v.onloadeddata = r);
+    await new Promise(r => setTimeout(r, 600));
+    const c = document.createElement('canvas');
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    c.getContext('2d').drawImage(v, 0, 0);
+    const px = (x, y) => Array.from(c.getContext('2d').getImageData(x, y, 1, 1).data).slice(0,3);
+    window.__grab.frame = {
+      size: [c.width, c.height],
+      topLeft: px(4, 4),
+      topMiddle: px(Math.floor(c.width/2), 4),
+    };
+    window.__grab.looksLikeOwnTab =
+      window.__grab.frame.topMiddle[0] > 180 &&
+      window.__grab.frame.topMiddle[2] > 180 &&
+      window.__grab.frame.topMiddle[1] < 90;
     out.textContent = JSON.stringify(window.__grab, null, 1);
   } catch (e) {
     window.__grab = {ok:false, name:e.name, message:e.message};
