@@ -423,6 +423,42 @@ final class ChromeLauncher {
         }
     }
 
+    /// Wakes the extension's service worker and tells it to reconnect.
+    ///
+    /// MV3 terminates an idle worker, which takes the native-messaging port —
+    /// and the port was the only thing keeping the worker alive, so the two die
+    /// together and nothing is left to restart either. chrome.alarms is the
+    /// documented backstop but did not register reliably here, and a page load
+    /// does not wake a worker when content scripts are declarative.
+    ///
+    /// Perch already holds the DevTools pipe, so it can simply reach in and
+    /// restart the worker itself. Evaluating in a worker target is what revives
+    /// it; calling connect() then re-establishes the port.
+    @discardableResult
+    func reviveExtension() async -> Bool {
+        guard let targets = try? await call("Target.getTargets"),
+              let result = targets["result"] as? [String: Any],
+              let infos = result["targetInfos"] as? [[String: Any]]
+        else { return false }
+
+        guard let worker = infos.first(where: {
+            ($0["type"] as? String) == "service_worker"
+            && (($0["url"] as? String) ?? "").contains(Perch.extensionID)
+        }), let id = worker["targetId"] as? String else { return false }
+
+        guard let attach = try? await call("Target.attachToTarget",
+                                           ["targetId": id, "flatten": true]),
+              let attachResult = attach["result"] as? [String: Any],
+              let session = attachResult["sessionId"] as? String
+        else { return false }
+
+        _ = try? await call("Runtime.evaluate", [
+            "expression": "try { if (!port) connect(); } catch (e) {} 1",
+            "returnByValue": true,
+        ], sessionId: session)
+        return true
+    }
+
     func shutdown() {
         if writeFD >= 0 { close(writeFD); writeFD = -1 }
         if readFD >= 0 { close(readFD); readFD = -1 }

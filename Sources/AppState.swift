@@ -40,6 +40,10 @@ enum GateFailure: Equatable {
             keeps running untouched — nothing is closed and no tabs are lost.
 
             Watch things in that Chrome window, and mirror it from here.
+
+            If Perch was restarted, press this again: the link to Chrome belongs \
+            to the Perch that opened it, so a fresh Perch has to open a fresh \
+            Chrome. It'll reuse the same profile, so nothing is lost.
             """
         case .chromeNotRunning:
             return """
@@ -161,6 +165,14 @@ final class AppState: ObservableObject {
         // broken, so it refreshes itself every couple of seconds.
         if tickCount % 2 == 0 {
             Task { await refreshWindows() }
+        }
+
+        // The extension's link dies whenever its service worker is reclaimed,
+        // and nothing inside Chrome reliably brings it back. Perch holds the
+        // DevTools pipe, so it does the reviving itself rather than leaving the
+        // app sitting there looking broken.
+        if managedChromeRunning, !extensionPresent, tickCount % 5 == 0 {
+            Task { await launcher.reviveExtension() }
         }
 
         // If the managed Chrome went away, stop claiming to mirror it.
