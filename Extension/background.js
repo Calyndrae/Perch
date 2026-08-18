@@ -135,9 +135,29 @@ function scheduleRetry() {
 }
 
 const RECONNECT_ALARM = 'perch-reconnect';
-chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 0.5 });
+
+// Registered from three places on purpose. A single top-level create() was
+// observed not to stick (chrome.alarms.getAll() came back empty), and if the
+// alarm is missing there is nothing left to revive a terminated worker at all.
+// create() is idempotent, so repeating it is free.
+//
+// The period is 1 minute rather than 0.5: Chrome clamps sub-minute periods, and
+// a clamped-away alarm is worse than a slower one.
+function ensureReconnectAlarm() {
+  try {
+    chrome.alarms.create(RECONNECT_ALARM, { periodInMinutes: 1, delayInMinutes: 1 });
+  } catch (err) {
+    console.warn('[Perch] could not create reconnect alarm:', err);
+  }
+}
+ensureReconnectAlarm();
+chrome.runtime.onStartup.addListener(ensureReconnectAlarm);
+chrome.runtime.onInstalled.addListener(ensureReconnectAlarm);
+
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === RECONNECT_ALARM && !port) connect();
+  if (alarm.name !== RECONNECT_ALARM) return;
+  ensureReconnectAlarm();
+  if (!port) connect();
 });
 
 chrome.runtime.onStartup.addListener(connect);
