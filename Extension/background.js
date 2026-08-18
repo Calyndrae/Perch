@@ -11,7 +11,7 @@
 
 const HOST = 'com.trixarh.perch.bridge';
 const SCRIPT_ID = 'perch-inject';
-const SETUP_URL = 'https://example.invalid/perch/setup';
+const SETUP_URL = 'https://github.com/Calyndrae/Perch';
 
 let port = null;
 let injecting = false;

@@ -10,7 +10,7 @@ enum Perch {
     static let nativeHostName = "com.trixarh.perch.bridge"
 
     /// Single edit point for the setup link once the projects are published.
-    static let setupURL = "https://example.invalid/perch/setup"
+    static let setupURL = "https://github.com/Calyndrae/Perch"
 
     static let chromeBundleID = "com.google.Chrome"
     static let chromeAppPath = "/Applications/Google Chrome.app"
