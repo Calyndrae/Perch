@@ -161,6 +161,11 @@ final class ChromeLauncher {
             "--remote-debugging-pipe",
             "--no-first-run",
             "--no-default-browser-check",
+            // Lets getDisplayMedia({preferCurrentTab:true}) resolve without the
+            // picker. The extension rewrites every screen-share request to that
+            // form, so a site is confined to its own tab and never gets the
+            // chance to ask for a display.
+            "--auto-accept-this-tab-capture",
         ]
         if !extraArguments.contains(where: { $0.hasPrefix("--user-data-dir") }) {
             args.append("--user-data-dir=\(Perch.chromeProfilePath)")

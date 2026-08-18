@@ -175,70 +175,63 @@
   }
 
   // ---- Screen sharing --------------------------------------------------
-  // A site asking to record your screen gets ITS OWN TAB back, always.
+  // A site asking to record your screen gets ITS OWN TAB back, always — and is
+  // told it received the whole screen, so it has no reason to retaliate.
   //
-  // Chrome's picker is what lets a site end up with your whole display, and
-  // once granted it keeps seeing whatever you switch to. Replacing
-  // getDisplayMedia means the picker never appears and the answer is never
-  // negotiable: the site receives a live stream of the page that asked, and
-  // nothing else on screen is capturable by it.
+  // Chrome's picker is what lets a site end up with your display, and once
+  // granted it keeps seeing whatever you switch to. Replacing getDisplayMedia
+  // means the answer is never negotiable.
   //
-  // The stream itself comes from chrome.tabCapture via bridge.js, because only
-  // an extension can mint a capture stream without a picker.
+  // `preferCurrentTab` is what makes this possible without an extension
+  // gesture: chrome.tabCapture refuses without activeTab ("Extension has not
+  // been invoked for the current page"), which a UI-less extension can never
+  // obtain. Perch launches Chrome with --auto-accept-this-tab-capture, so the
+  // picker is skipped entirely.
   if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
-    const REQUEST = 'perch:tab-stream-request';
-    const RESPONSE = 'perch:tab-stream-response';
-    const nativeGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    const nativeGDM = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
 
-    const requestTabStreamID = () => new Promise((resolve, reject) => {
-      const nonce = String(Math.random()) + String(Date.now());
-      const timer = setTimeout(() => {
-        window.removeEventListener('message', onReply);
-        reject(new Error('timeout'));
-      }, 5000);
-
-      function onReply(event) {
-        const d = event.data;
-        if (event.source !== window || !d || d.type !== RESPONSE || d.nonce !== nonce) return;
-        clearTimeout(timer);
-        window.removeEventListener('message', onReply);
-        d.streamId ? resolve(d.streamId) : reject(new Error(d.error || 'no stream'));
+    // A tab capture reports displaySurface "browser" and a tab-ish label. A
+    // site that checks either would know it was fenced in — and the whole point
+    // is that it must not know. Report what a full-screen share reports.
+    const disguise = (stream) => {
+      for (const track of stream.getVideoTracks()) {
+        const nativeSettings = track.getSettings.bind(track);
+        const patchedSettings = function getSettings() {
+          const s = nativeSettings();
+          s.displaySurface = 'monitor';
+          s.logicalSurface = true;
+          s.cursor = s.cursor || 'always';
+          return s;
+        };
+        asNative(patchedSettings, 'getSettings');
+        try {
+          Object.defineProperty(track, 'getSettings',
+            { configurable: true, writable: true, value: patchedSettings });
+          Object.defineProperty(track, 'label',
+            { configurable: true, get: asNative(function () {
+                return 'Entire screen'; }, 'get label') });
+        } catch (_) {}
       }
-      window.addEventListener('message', onReply);
-      window.postMessage({ type: REQUEST, nonce }, '*');
-    });
+      return stream;
+    };
 
     const patchedGetDisplayMedia = function getDisplayMedia(constraints) {
-      return requestTabStreamID().then((streamId) => nativeGetUserMedia({
-        // The legacy constraint form is the only one that accepts a tab
-        // capture stream id.
-        video: {
-          mandatory: {
-            chromeMediaSource: 'tab',
-            chromeMediaSourceId: streamId,
-            // Keep it sharp; tab capture otherwise defaults low.
-            maxWidth: window.screen.width,
-            maxHeight: window.screen.height,
-            maxFrameRate: 60,
-          },
-        },
-        // Audio is left to whatever the site asked for. Requesting tab audio
-        // here would silence the tab for the user, which is worse than the
-        // site simply not getting sound.
-        audio: false,
-      })).catch((err) => {
-        // Fail closed. Falling back to the real picker would hand the site the
-        // screen-grab we exist to prevent.
-        throw new DOMException(
-          'Permission denied by system', 'NotAllowedError');
+      const forced = Object.assign({}, constraints || {}, {
+        video: (constraints && typeof constraints.video === 'object')
+          ? constraints.video : true,
+        preferCurrentTab: true,
+        selfBrowserSurface: 'include',
+        // Never offer the site a way to ask for a different surface.
+        systemAudio: 'exclude',
+        surfaceSwitching: 'exclude',
+        monitorTypeSurfaces: 'exclude',
       });
+      return nativeGDM(forced).then(disguise);
     };
     asNative(patchedGetDisplayMedia, 'getDisplayMedia');
     try {
       Object.defineProperty(navigator.mediaDevices, 'getDisplayMedia', {
-        configurable: true,
-        writable: true,
-        value: patchedGetDisplayMedia,
+        configurable: true, writable: true, value: patchedGetDisplayMedia,
       });
     } catch (_) {
       try { navigator.mediaDevices.getDisplayMedia = patchedGetDisplayMedia; } catch (_) {}
