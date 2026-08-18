@@ -25,7 +25,8 @@ async function grab() {
       label: t.label,
       surface: st.displaySurface || '(none)',
       width: st.width, height: st.height,
-      audioTracks: s.getAudioTracks().length
+      audioTracks: s.getAudioTracks().length,
+      audio: s.getAudioTracks().map(a => ({label: a.label, settings: a.getSettings()}))
     };
     out.textContent = JSON.stringify(window.__grab, null, 1);
 
