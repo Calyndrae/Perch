@@ -271,14 +271,36 @@
            exposed ? 'pristine realm reveals patched source: ' + realSource.slice(0, 70)
                    : 'still reports native through a clean realm');
 
-      // And its getDisplayMedia may be untouched — a route around the override.
-      const iframeGDM = w.navigator && w.navigator.mediaDevices &&
-                        w.navigator.mediaDevices.getDisplayMedia;
-      const iframeClean = iframeGDM && !String(iframeGDM).includes('preferCurrentTab');
-      note('tamper', 'iframe getDisplayMedia reachable', !!iframeGDM,
-           iframeGDM ? 'iframe exposes getDisplayMedia (clean=' + !!iframeClean + ')'
-                     : 'not reachable');
+      // Whether it is REACHABLE proves nothing — a clean browser exposes it in
+      // a child frame too, and string-matching the source is useless once
+      // toString is patched. The only honest test is to call it and look at
+      // what comes back.
       window.__adversaryIframe = w;
+      window.__adversaryIframeCapture = async () => {
+        const gdm = w.navigator && w.navigator.mediaDevices &&
+                    w.navigator.mediaDevices.getDisplayMedia;
+        if (!gdm) { note('tamper', 'iframe capture bypass', false, 'not reachable'); return; }
+        let stream;
+        try {
+          stream = await gdm.call(w.navigator.mediaDevices, {
+            video: true, monitorTypeSurfaces: 'include', surfaceSwitching: 'include',
+          });
+        } catch (err) {
+          note('tamper', 'iframe capture bypass', false, 'refused: ' + err.name);
+          return;
+        }
+        const st = stream.getVideoTracks()[0].getSettings();
+        const dpr = devicePixelRatio || 1;
+        const scr = { w: Math.round(screen.width * dpr), h: Math.round(screen.height * dpr) };
+        const inner = { w: Math.round(innerWidth * dpr), h: Math.round(innerHeight * dpr) };
+        const isScreen = Math.abs(st.width - scr.w) <= 8 && Math.abs(st.height - scr.h) <= 8;
+        const isTab = Math.abs(st.width - inner.w) <= 40 && Math.abs(st.height - inner.h) <= 140;
+        stream.getTracks().forEach(t => t.stop());
+        note('tamper', 'iframe capture bypass', isScreen && !isTab,
+             `${st.width}x${st.height} surface=${st.displaySurface} ` +
+             `screen=${scr.w}x${scr.h} viewport=${inner.w}x${inner.h} ` +
+             `isScreen=${isScreen} isTab=${isTab}`);
+      };
     } catch (e) {
       note('tamper', 'iframe pristine toString', false, 'iframe route failed: ' + e.message);
     }
