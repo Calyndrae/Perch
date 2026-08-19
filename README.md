@@ -112,6 +112,26 @@ Chrome it started.
 
 ---
 
+## Adding your own extensions
+
+Perch's Chrome runs on its own profile, so whatever you have installed in your
+everyday Chrome isn't there. **Settings → Your extensions** fixes that: add a
+folder, a `.zip` or a `.crx`, and it loads every time Perch starts Chrome.
+
+Each one has a switch, so you can turn one off without removing it, and
+**Remove** puts it in the Trash rather than deleting it — you may not have
+another copy.
+
+Perch's own extension is loaded first and its failure is fatal, since nothing
+works without it. Yours are loaded individually afterwards, so one bad folder
+costs you that extension and not the browser.
+
+Worth being plain about: an extension you add can read and change pages in
+Perch's Chrome, exactly as it could in any browser. Only add ones you'd install
+normally.
+
+---
+
 ## Uninstalling
 
 **Settings → Uninstall** lists everything Perch put on your Mac, with sizes, and

@@ -4,6 +4,8 @@ struct SettingsView: View {
     @ObservedObject var state: AppState
 
     @State private var items: [Uninstaller.Item] = []
+    @State private var extras: [UserExtensions.Item] = []
+    @State private var extraError: String?
     @State private var removeProfile = false
     @State private var confirming = false
     @State private var busy = false
@@ -41,6 +43,8 @@ struct SettingsView: View {
                 Text("Status")
             }
 
+            extensionsSection
+
             uninstallSection
         }
         .formStyle(.grouped)
@@ -48,6 +52,7 @@ struct SettingsView: View {
         .task {
             await state.refreshAll()
             items = Uninstaller.inventory()
+            reloadExtras()
         }
         .alert("Move Perch to the Trash?", isPresented: $confirming) {
             Button("Move to Trash", role: .destructive) { runUninstall() }
@@ -61,6 +66,81 @@ struct SettingsView: View {
                  : "Everything listed goes to the Trash. Perch's Chrome profile is kept, so "
                  + "your logins there survive.\n\nNothing is erased; you can put it back "
                  + "from the Trash.")
+        }
+    }
+
+    // MARK: - Your extensions
+
+    @ViewBuilder private var extensionsSection: some View {
+        Section {
+            if extras.isEmpty {
+                Text("Perch's Chrome runs on its own profile, so extensions you have in your "
+                   + "everyday Chrome aren't there. Add them here and they'll be loaded every "
+                   + "time Perch starts Chrome.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(extras) { item in
+                    HStack(spacing: 10) {
+                        Toggle("", isOn: Binding(
+                            get: { item.enabled },
+                            set: { UserExtensions.setEnabled(item, $0); reloadExtras() }
+                        ))
+                        .labelsHidden()
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.name).lineLimit(1)
+                            Text("version \(item.version)")
+                                .font(.caption).foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                        Button("Remove") {
+                            try? UserExtensions.remove(item)
+                            reloadExtras()
+                        }
+                    }
+                }
+            }
+
+            if let extraError {
+                Text(extraError).font(.caption).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Button("Add Extension…") { pickExtension() }
+                Spacer()
+                if !extras.isEmpty {
+                    Text("Applied next time Chrome starts")
+                        .font(.caption).foregroundStyle(.tertiary)
+                }
+            }
+
+            Text("A folder, a .zip or a .crx all work. Anything you add can read and change "
+               + "pages in Perch's Chrome, exactly as it could in any browser — so only add "
+               + "extensions you'd install normally.")
+                .font(.caption).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        } header: {
+            Text("Your extensions")
+        }
+    }
+
+    private func reloadExtras() { extras = UserExtensions.installed() }
+
+    private func pickExtension() {
+        extraError = nil
+        let panel = NSOpenPanel()
+        panel.message = "Choose an unpacked extension folder, or a .zip or .crx file"
+        panel.prompt = "Add"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            _ = try UserExtensions.add(from: url)
+            reloadExtras()
+        } catch {
+            extraError = error.localizedDescription
         }
     }
 

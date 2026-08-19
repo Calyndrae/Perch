@@ -93,6 +93,19 @@ final class ChromeLauncher {
         let id = try await loadUnpacked(path: extensionPath)
         loadedExtensionID = id
         NSLog("[Perch] loaded extension %@ into managed Chrome", id)
+
+        // The user's own extensions go in afterwards. Perch's own is loaded
+        // first and its failure is fatal, because nothing works without it;
+        // these are each allowed to fail on their own, so one bad folder does
+        // not cost you the browser.
+        for path in UserExtensions.enabledPaths {
+            do {
+                let extra = try await loadUnpacked(path: path)
+                NSLog("%@", "[Perch] loaded your extension \(extra) from \(path)")
+            } catch {
+                NSLog("%@", "[Perch] could not load \(path): \(error.localizedDescription)")
+            }
+        }
         return id
     }
 
