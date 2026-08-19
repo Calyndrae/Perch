@@ -180,6 +180,63 @@
     }
 
     // ---- screen capture ----------------------------------------------------
+    // A genuine displaySurface:"monitor" stream is screen-sized. Ours is the
+    // tab, so a site comparing getSettings().width against screen.width would
+    // catch the disguise — not a leak, but enough to refuse service.
+    //
+    // So screen.* is made to agree, and ONLY while a capture is live. Reporting
+    // a fake display size permanently would follow the user into every page,
+    // breaking responsive layouts and window placement for no benefit. Outside
+    // an active capture these getters return the truth.
+    let activeCaptures = 0;
+    let fakeScreen = null;
+
+    const screenProto = win.Screen && win.Screen.prototype;
+    if (screenProto) {
+      // Grab every original getter BEFORE replacing any of them — otherwise the
+      // avail* getters would read back our own replacement for width/height.
+      const originals = {};
+      for (const prop of ['width', 'height', 'availWidth', 'availHeight']) {
+        const d = Object.getOwnPropertyDescriptor(screenProto, prop);
+        if (d && d.get) originals[prop] = d;
+      }
+      for (const prop of Object.keys(originals)) {
+        const original = originals[prop];
+        const getter = asNative(function () {
+          const real = original.get.call(this);
+          if (!fakeScreen) return real;
+          if (prop === 'width') return fakeScreen.w;
+          if (prop === 'height') return fakeScreen.h;
+          // avail* keeps its real proportion of the display, so the pair stays
+          // plausible rather than suspiciously identical to width/height.
+          const isW = prop === 'availWidth';
+          const full = originals[isW ? 'width' : 'height'];
+          const realFull = full ? full.get.call(this) : 0;
+          const base = isW ? fakeScreen.w : fakeScreen.h;
+          return realFull ? Math.round(base * (real / realFull)) : base;
+        }, `get ${prop}`);
+        try {
+          Object.defineProperty(screenProto, prop, {
+            configurable: true, enumerable: original.enumerable !== false, get: getter,
+          });
+        } catch (_) {}
+      }
+    }
+
+    const beginScreenSpoof = (settings) => {
+      const dpr = win.devicePixelRatio || 1;
+      if (!settings || !settings.width || !settings.height) return;
+      fakeScreen = {
+        w: Math.round(settings.width / dpr),
+        h: Math.round(settings.height / dpr),
+      };
+      activeCaptures++;
+    };
+    const endScreenSpoof = () => {
+      activeCaptures = Math.max(0, activeCaptures - 1);
+      if (activeCaptures === 0) fakeScreen = null;
+    };
+
     const md = win.navigator && win.navigator.mediaDevices;
     if (md && md.getDisplayMedia) {
       const nativeGDM = md.getDisplayMedia.bind(md);
@@ -187,6 +244,23 @@
       // A tab capture reports displaySurface "browser" and a tab-ish label.
       // A site that checks either would know it was fenced in.
       const disguise = (stream) => {
+        const first = stream.getVideoTracks()[0];
+        if (first) {
+          beginScreenSpoof(first.getSettings());
+          // The spoof must last exactly as long as the capture does.
+          let finished = false;
+          const finish = () => { if (!finished) { finished = true; endScreenSpoof(); } };
+          try { first.addEventListener('ended', finish); } catch (_) {}
+          for (const t of stream.getTracks()) {
+            const nativeStop = t.stop.bind(t);
+            const patchedStop = function stop() { finish(); return nativeStop(); };
+            asNative(patchedStop, 'stop');
+            try {
+              Object.defineProperty(t, 'stop',
+                { configurable: true, writable: true, value: patchedStop });
+            } catch (_) {}
+          }
+        }
         for (const track of stream.getVideoTracks()) {
           const nativeSettings = track.getSettings.bind(track);
           const patchedSettings = function getSettings() {

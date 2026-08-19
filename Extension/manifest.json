@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Perch Bridge",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Companion to Perch.app. Screen-share requests get the page's own tab instead of your screen, and exit-intent popups are blocked.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApG3rQ550B3pz+RRJMyc5/hZqexrcLaRegHHYcBAPbJ+M+b+AtrwrPT7pHBKfk71Qe/Z1zmm2TuqGWrxRqLZFavsf6JMh2fqz+PeEW9zQuCdpyt+ZifXEsU26gNkrq7nxRiYrgFWwz2TX/KXGXKoS3fS5nQHv0CNfZorDwcspAmJL5b0mUXjyw+iz9Yi4Me9D8k14G1MEigH4m3bYI6L6AjsWhZLoqrif7Nc/AHi5Q9kFHv1kGAADLiSm9ZsL30JH+hIFJ9trk5qVCJ3m1ikrJtwWVACXLnZq7Jhlyo4aEh59zMayR8S2X1ktCiCCYz2ntHtHEqbSblbrPRGXi0IEDQIDAQAB",
   "background": {

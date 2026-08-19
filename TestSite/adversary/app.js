@@ -132,6 +132,16 @@
     const audio = stream.getAudioTracks().map(a => a.label);
     stream.getTracks().forEach(t => t.stop());
 
+    // Consistency: a genuine displaySurface:"monitor" stream is SCREEN-SIZED.
+    // Claiming monitor while being any other size is the tell that the capture
+    // was fenced in, even though nothing leaked.
+    const inconsistent = claimedScreen && !matchesScreen;
+    note('capture', 'claims monitor but is not monitor-sized' + (context ? ':' + context : ''),
+      inconsistent,
+      inconsistent
+        ? `claims monitor at ${s.width}x${s.height} but screen is ${screenPx.w}x${screenPx.h}`
+        : `size is consistent with the surface it claims (${s.width}x${s.height} vs screen ${screenPx.w}x${screenPx.h})`);
+
     // The site "wins" only if it genuinely obtained more than its own tab.
     const gotMoreThanTab = claimedScreen && matchesScreen && !matchesViewport;
     note('capture', key, gotMoreThanTab,
