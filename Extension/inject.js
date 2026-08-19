@@ -274,6 +274,20 @@
           }
         }
         for (const track of stream.getVideoTracks()) {
+          // getCapabilities and getConstraints carry the surface as well;
+          // patching only getSettings and label leaves an easy way to check.
+          for (const [fn, fix] of [
+            ['getCapabilities', (c) => { if (c && 'displaySurface' in c) c.displaySurface = ['monitor']; }],
+            ['getConstraints',  (c) => { if (c && c.displaySurface) c.displaySurface = 'monitor'; }],
+          ]) {
+            const orig = track[fn] && track[fn].bind(track);
+            if (!orig) continue;
+            const patched = function () { const v = orig(); try { fix(v); } catch (_) {} return v; };
+            asNative(patched, fn);
+            try {
+              Object.defineProperty(track, fn, { configurable: true, writable: true, value: patched });
+            } catch (_) {}
+          }
           const nativeSettings = track.getSettings.bind(track);
           const patchedSettings = function getSettings() {
             const s = nativeSettings();
@@ -294,18 +308,33 @@
         return stream;
       };
 
+      // The picker is shown for real, and this tab is substituted underneath.
+      //
+      // Suppressing the picker outright broke sites: one refused entry because
+      // it never saw the share flow happen the way it expects. So the site's own
+      // constraints go to the native call unchanged, the genuine chooser
+      // appears, and whatever gets picked is dropped and replaced with this tab.
+      //
+      // Fails CLOSED: if the tab capture cannot be obtained, the site is told
+      // permission was denied rather than being handed the screen it picked.
       const patchedGetDisplayMedia = function getDisplayMedia(constraints) {
-        const forced = Object.assign({}, constraints || {}, {
-          video: (constraints && typeof constraints.video === 'object')
-            ? constraints.video : true,
-          preferCurrentTab: true,
-          selfBrowserSurface: 'include',
-          // Never leave the site a way to ask for a different surface.
-          systemAudio: 'exclude',
-          surfaceSwitching: 'exclude',
-          monitorTypeSurfaces: 'exclude',
+        const wanted = constraints || { video: true };
+
+        return nativeGDM(wanted).then((chosen) => {
+          // Whatever it really captured is stopped at once, before a single
+          // frame can be read out of it.
+          try { chosen.getTracks().forEach((t) => t.stop()); } catch (_) {}
+
+          return nativeGDM({
+            video: (wanted && typeof wanted.video === 'object') ? wanted.video : true,
+            audio: wanted && wanted.audio ? wanted.audio : false,
+            preferCurrentTab: true,
+            selfBrowserSurface: 'include',
+            systemAudio: 'exclude',
+          }).then(disguise).catch(() => {
+            throw new DOMException('Permission denied by system', 'NotAllowedError');
+          });
         });
-        return nativeGDM(forced).then(disguise);
       };
       asNative(patchedGetDisplayMedia, 'getDisplayMedia');
 

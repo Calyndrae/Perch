@@ -11,7 +11,7 @@ macOS only.
 
 | Without Perch | With Perch |
 |---|---|
-| "Share your screen?" → you pick → the site watches **everything**, including when you switch to Discord | The site silently receives **its own tab** and nothing else |
+| "Share your screen?" → you pick → the site watches **everything**, including when you switch to Discord | The picker appears as normal, you pick anything you like, and the site receives **its own tab** |
 | Exit-intent popups when your mouse drifts toward the tab bar | Gone |
 | "Are you sure you want to leave?" | Gone |
 | — | Optional: float any Chrome window on top while you do other things |
@@ -154,10 +154,19 @@ against. A mismatch is rejected and the copy inside the app is used instead.
 <summary><b>Why a site can't refuse to be fenced in</b></summary>
 
 `navigator.mediaDevices.getDisplayMedia` is replaced before any page script runs.
-The replacement forces `preferCurrentTab`, and strips the site's ability to ask for
-anything else: `surfaceSwitching`, `monitorTypeSurfaces` and `systemAudio` are all
-forced off. Chrome is launched with `--auto-accept-this-tab-capture`, which is what
-removes the picker entirely.
+The site's own constraints reach the native call untouched, so Chrome's real
+picker appears with every option present.
+
+Whatever gets chosen is stopped immediately — before a frame can be read from it
+— and a second capture of the current tab is returned in its place. That second
+call is silent because Chrome runs with `--auto-accept-this-tab-capture`, and
+both calls fit inside one user gesture (verified).
+
+It **fails closed**: if the tab capture can't be obtained, the site is told
+permission was denied rather than handed the screen it picked.
+
+An earlier version suppressed the picker outright. That broke real sites — one
+refused entry because it never saw the share flow happen at all.
 
 The returned track is then disguised — `getSettings()` reports
 `displaySurface: "monitor"`, and `label` reads `Entire screen`. A site that checks
