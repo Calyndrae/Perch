@@ -176,6 +176,10 @@ final class ChromeLauncher {
             "--remote-debugging-pipe",
             "--no-first-run",
             "--no-default-browser-check",
+            // Release Chrome swallows its own log output, including the FATAL
+            // line a failed CHECK prints. Without this a crash leaves only an
+            // unsymbolicated stack and nothing that names the cause.
+            "--enable-logging=stderr",
             // Lets getDisplayMedia({preferCurrentTab:true}) resolve without the
             // picker. The extension rewrites every screen-share request to that
             // form, so a site is confined to its own tab and never gets the
