@@ -112,6 +112,7 @@
     // Sample a real frame: a genuine screen grab contains the desktop, so the
     // page's own colours filling the frame is a strong tell it is only the tab.
     let sample = 'n/a';
+    let pageDarkPct = -1;
     try {
       const v = document.createElement('video');
       v.srcObject = stream; v.muted = true;
@@ -125,7 +126,8 @@
       for (let i = 0; i < px.length; i += 4) {
         if (px[i] < 40 && px[i + 1] < 45 && px[i + 2] < 55) dark++;
       }
-      sample = Math.round(100 * dark / (px.length / 4)) + '% page-dark pixels';
+      pageDarkPct = Math.round(100 * dark / (px.length / 4));
+      sample = pageDarkPct + '% page-dark pixels';
       v.pause();
     } catch (e) { sample = 'sample failed: ' + e.name; }
 
@@ -142,8 +144,13 @@
         ? `claims monitor at ${s.width}x${s.height} but screen is ${screenPx.w}x${screenPx.h}`
         : `size is consistent with the surface it claims (${s.width}x${s.height} vs screen ${screenPx.w}x${screenPx.h})`);
 
-    // The site "wins" only if it genuinely obtained more than its own tab.
-    const gotMoreThanTab = claimedScreen && matchesScreen && !matchesViewport;
+    // Dimensions alone can no longer decide this: if screen.* is reported
+    // consistently with the capture, matchesScreen proves nothing from inside
+    // the page. The frame content is the last signal a page still has — a real
+    // desktop grab is not overwhelmingly this page's own palette.
+    const frameLooksLikeThisPage = pageDarkPct >= 35;
+    const gotMoreThanTab =
+      claimedScreen && matchesScreen && !matchesViewport && !frameLooksLikeThisPage;
     note('capture', key, gotMoreThanTab,
       `label="${track.label}" surface=${s.displaySurface} ${s.width}x${s.height} ` +
       `screen=${screenPx.w}x${screenPx.h} viewport=${innerPx.w}x${innerPx.h} ` +

@@ -17,7 +17,14 @@
 (() => {
   'use strict';
 
-  const MOVE_GUARD_PX = 10;
+  // Exit-intent detectors that watch mousemove typically fire well below the
+  // very top edge — around 60px — and key on the pointer heading UPWARD. A flat
+  // 10px band sat underneath that entirely.
+  //
+  // So the band is wide, but only upward movement inside it is dropped.
+  // Downward and lateral movement passes untouched at every coordinate, which
+  // is what top navigation bars and hover menus actually rely on.
+  const MOVE_GUARD_PX = 70;
   const SWALLOWED = new Set(['beforeunload', 'pagehide', 'freeze']);
   const GUARDED = new Set([
     'mouseleave', 'mouseout', 'mousemove',
@@ -87,13 +94,18 @@
       if (typeof listener !== 'function') return listener;
       let known = wrappers.get(listener);
       if (known) return known;
+      let lastY = Infinity;
       known = function (event) {
         // `this` is whatever the handler was attached to, so element-level
         // handlers are never filtered even though the prototype is patched.
         if (event && typeof event.clientY === 'number' && isDocumentish(this)) {
-          const leaving = MOVE_LIKE.has(type) ? event.clientY <= MOVE_GUARD_PX
-                                              : event.clientY <= 0;
-          if (leaving) return;
+          if (MOVE_LIKE.has(type)) {
+            const headingUp = event.clientY < lastY;
+            lastY = event.clientY;
+            if (headingUp && event.clientY <= MOVE_GUARD_PX) return;
+          } else if (event.clientY <= 0) {
+            return;
+          }
         }
         return listener.apply(this, arguments);
       };
