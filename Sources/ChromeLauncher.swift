@@ -248,6 +248,8 @@ final class ChromeLauncher {
         chromePID = pid
         writeFD = toChrome[1]
         readFD = fromChrome[0]
+        lastReloadAttempt = nil
+        reloadAttempts = 0
 
         // Without O_NONBLOCK, read() parks the thread forever when Chrome has
         // nothing to say, so receive()'s deadline can never be evaluated and a
@@ -509,15 +511,33 @@ final class ChromeLauncher {
     /// had. What there is: Perch holds the DevTools pipe, so it can notice the
     /// extension is gone and load it again. Removing it in chrome://extensions
     /// therefore lasts until Perch next looks, and never survives a restart.
+    private var lastReloadAttempt: Date?
+    private var reloadAttempts = 0
+
     @discardableResult
     func ensureExtensionLoaded() async -> Bool {
         // A worker that exists but is idle only needs waking.
         if await reviveExtension() { return true }
 
-        // No worker for our id means it is not installed any more.
+        // Absence of a worker does NOT mean the extension is gone: MV3 reclaims
+        // idle workers constantly, so this is also true of one that is merely
+        // asleep. Reloading on that signal alone re-ran loadUnpacked every few
+        // seconds, which Chrome answered with "Duplicate script ID" and
+        // eventually a SIGTRAP.
+        //
+        // So reloading is rate-limited and capped. If several attempts have not
+        // restored the link, something else is wrong and hammering Chrome will
+        // not fix it.
+        let now = Date()
+        if let last = lastReloadAttempt, now.timeIntervalSince(last) < 60 { return false }
+        guard reloadAttempts < 3 else { return false }
+        lastReloadAttempt = now
+        reloadAttempts += 1
+
         guard let path = Self.extensionPath else { return false }
         do {
             let id = try await loadUnpacked(path: path)
+            reloadAttempts = 0        // it worked; allow future recovery
             NSLog("%@", "[Perch] extension was missing; loaded it again (\(id))")
             for extra in UserExtensions.enabledPaths {
                 _ = try? await loadUnpacked(path: extra)
