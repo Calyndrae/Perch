@@ -112,6 +112,27 @@ Chrome it started.
 
 ---
 
+## Uninstalling
+
+**Settings → Uninstall** lists everything Perch put on your Mac, with sizes, and
+moves it all to the **Trash** — nothing is erased, so you can put it back.
+
+Perch's Chrome profile is a **separate, opt-in checkbox, off by default**. It is
+the only item that holds anything of yours — the sites you signed into there, your
+history and cookies — and it is by far the largest. Leaving it off removes about a
+megabyte and keeps the profile ready if you reinstall.
+
+Two things worth knowing:
+
+- If you do include the profile, Perch closes its Chrome first. Trashing a profile
+  that Chrome still has open leaves it half-written, which would defeat the point
+  of it being recoverable.
+- macOS keeps the Screen Recording permission in a database no app may edit, so
+  Perch will still be listed under Privacy & Security afterwards. Switch it off
+  there yourself — Settings links you straight to the pane.
+
+---
+
 ## Building from source
 
 ```bash
