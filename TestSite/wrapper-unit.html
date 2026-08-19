@@ -1,0 +1,70 @@
+<!doctype html>
+<meta charset="utf-8"><title>wrapper unit</title>
+<body style="font:13px ui-monospace,Menlo,monospace;background:#111;color:#eee;padding:20px">
+<pre id="out">running…</pre>
+<script>
+// Stub the native call BEFORE inject.js loads, so inject.js wraps this and we
+// can see exactly what it passes through and what it does with the result.
+window.__calls = [];
+window.__stopped = 0;
+function fakeStream(tag) {
+  const track = {
+    kind: 'video', label: tag, _tag: tag,
+    getSettings: () => ({ width: 1000, height: 800, displaySurface: tag }),
+    stop() { window.__stopped++; },
+    addEventListener() {},
+  };
+  return { _tag: tag, getVideoTracks: () => [track], getAudioTracks: () => [],
+           getTracks: () => [track] };
+}
+// On the PROTOTYPE, not the instance. An own property on navigator.mediaDevices
+// shadows the prototype, so stubbing there bypasses inject.js entirely and the
+// test measures nothing — which is exactly what happened first time.
+MediaDevices.prototype.getDisplayMedia = function getDisplayMedia(c) {
+  window.__calls.push(JSON.parse(JSON.stringify(c || {})));
+  // First call = what the picker would show. Second = the substitution.
+  const n = window.__calls.length;
+  if (window.__failSecond && n === 2) return Promise.reject(new Error('no tab capture'));
+  return Promise.resolve(fakeStream(n === 1 ? 'what-the-user-picked' : 'the-tab'));
+};
+</script>
+<script src="../Extension/inject.js"></script>
+<script>
+(async () => {
+  const log = [];
+  // The site asks for the screen, with its own constraints.
+  const siteConstraints = { video: { frameRate: 30 }, audio: true };
+  const got = await navigator.mediaDevices.getDisplayMedia(siteConstraints);
+
+  log.push('calls made to the native API: ' + window.__calls.length);
+  log.push('');
+  log.push('1st call (this is what the PICKER sees):');
+  log.push('  ' + JSON.stringify(window.__calls[0]));
+  log.push('  preferCurrentTab present? ' +
+    ('preferCurrentTab' in window.__calls[0] ? 'YES — picker suppressed' : 'no — real picker shows'));
+  log.push('  site constraints preserved? ' +
+    (JSON.stringify(window.__calls[0].video) === JSON.stringify(siteConstraints.video) ? 'yes' : 'NO'));
+  log.push('');
+  log.push('2nd call (the substitution):');
+  log.push('  ' + JSON.stringify(window.__calls[1] || null));
+  log.push('  preferCurrentTab? ' + (window.__calls[1] && window.__calls[1].preferCurrentTab === true));
+  log.push('');
+  log.push('picked stream stopped before use? ' + (window.__stopped >= 1) + '  (stop() calls: ' + window.__stopped + ')');
+  log.push('site actually received: ' + got._tag);
+  log.push('site was told surface:  ' + got.getVideoTracks()[0].getSettings().displaySurface);
+  log.push('site was told label:    ' + got.getVideoTracks()[0].label);
+
+  // Fail-closed check: if the tab capture fails, is the site denied?
+  window.__failSecond = true; window.__calls.length = 0;
+  let failMode;
+  try {
+    await navigator.mediaDevices.getDisplayMedia({ video: true });
+    failMode = 'RETURNED A STREAM — does not fail closed';
+  } catch (e) { failMode = e.name + ' (' + e.message + ')'; }
+  log.push('');
+  log.push('when tab capture fails: ' + failMode);
+
+  document.getElementById('out').textContent = log.join('\n');
+  window.__unit = log.join('\n');
+})();
+</script>
