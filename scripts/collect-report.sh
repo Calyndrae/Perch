@@ -58,29 +58,19 @@ echo "=== newest Chrome crash report ==="
 R=$(ls -t "$HOME/Library/Logs/DiagnosticReports/"Google\ Chrome*.ips 2>/dev/null | head -1)
 if [ -n "$R" ]; then
   echo "file: $(basename "$R")"
-  # .ips is two concatenated JSON documents, not text — grep finds nothing.
-  python3 - "$R" <<'PY'
-import json, sys
-raw = open(sys.argv[1], errors="replace").read()
-try:
-    body = json.loads(raw.split("\n", 1)[1])
-except Exception:
-    print("  (could not parse)"); raise SystemExit
-for k in ("parentProc", "responsibleProc", "procLaunch", "captureTime"):
-    if body.get(k): print(f"  {k}: {body[k]}")
-ex = body.get("exception", {})
-print(f"  exception: {ex.get('type')} {ex.get('signal') or ''} {ex.get('codes') or ''}")
-t = body.get("termination", {})
-if t: print(f"  termination: ns={t.get('namespace')} code={t.get('code')} {t.get('reasons') or ''}")
-# Name the frame that trapped, so the crash site is identifiable.
-for th in body.get("threads", []):
-    if th.get("triggered"):
-        f = (th.get("frames") or [{}])[0]
-        imgs = body.get("usedImages", [])
-        name = imgs[f["imageIndex"]].get("name") if f.get("imageIndex") is not None and f["imageIndex"] < len(imgs) else "?"
-        print(f"  crashed in: {name} +{f.get('imageOffset')}")
-        break
-PY
+  # plutil, not python3: python3 on a clean macOS triggers the Xcode command
+  # line tools installer, which is a rude thing for a diagnostic to do.
+  tail -n +2 "$R" > /tmp/perch-ips.json 2>/dev/null
+  for k in parentProc responsibleProc captureTime; do
+    v=$(plutil -extract "$k" raw -o - /tmp/perch-ips.json 2>/dev/null)
+    [ -n "$v" ] && echo "  $k: $v"
+  done
+  et=$(plutil -extract exception.type raw -o - /tmp/perch-ips.json 2>/dev/null)
+  es=$(plutil -extract exception.signal raw -o - /tmp/perch-ips.json 2>/dev/null)
+  echo "  exception: ${et:-?} ${es:-}"
+  tn=$(plutil -extract termination.namespace raw -o - /tmp/perch-ips.json 2>/dev/null)
+  [ -n "$tn" ] && echo "  termination namespace: $tn"
+  rm -f /tmp/perch-ips.json
 else
   echo "(no crash report found)"
 fi

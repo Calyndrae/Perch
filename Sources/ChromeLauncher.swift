@@ -148,10 +148,23 @@ final class ChromeLauncher {
         // Disclaiming makes Chrome answer for itself, so its own Info.plist and
         // its own permission prompts apply, as they would if you had opened
         // Chrome from the Dock.
+        //
+        // DISABLED. A bisect on macOS 15.6.1 cleared every flag Perch passes —
+        // Chrome survived all of them from a shell — which left the spawn
+        // itself, and disclaiming is the only part of it a shell cannot
+        // reproduce. It is a private symbol with no guarantee of behaving the
+        // same across releases, and the usage strings added to Info.plist cover
+        // the TCC case through a supported route, so the private call buys
+        // nothing that is worth a crash.
+        //
+        // Kept resolved rather than deleted so it can be switched back on for
+        // testing if the crash turns out to be elsewhere.
+        let useDisclaim = false
+
         var attrs: posix_spawnattr_t?
         posix_spawnattr_init(&attrs)
         defer { posix_spawnattr_destroy(&attrs) }
-        let disclaimed = spawnattrsSetDisclaim?(&attrs, 1) ?? -1
+        let disclaimed = useDisclaim ? (spawnattrsSetDisclaim?(&attrs, 1) ?? -1) : 0
         if disclaimed != 0 {
             // Not fatal any more: Perch stays TCC-responsible, and the usage
             // strings in its Info.plist are what stop macOS killing Chrome.
