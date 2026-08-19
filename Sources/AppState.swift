@@ -89,6 +89,8 @@ final class AppState: ObservableObject {
     @Published private(set) var isLaunchingChrome = false
     @Published private(set) var extensionVersion: String?
     @Published private(set) var updateStatus: String?
+    @Published private(set) var appUpdateStatus: String?
+    @Published private(set) var appUpdateReady = false
 
     let stream = MirrorStream()
     private let bridge = BridgeServer()
@@ -109,6 +111,15 @@ final class AppState: ObservableObject {
             let result = await ExtensionUpdater.updateFromGitHub()
             self.updateStatus = result.describedForUser
             self.extensionVersion = ExtensionUpdater.installedVersion()
+        }
+
+        // And update Perch itself. The swap happens on disk; the running copy
+        // stays as it is until relaunched, so this never pulls the app out from
+        // under someone mid-session.
+        Task { @MainActor in
+            let result = await AppUpdater.checkAndInstall()
+            self.appUpdateStatus = result.describedForUser
+            if case .installed = result { self.appUpdateReady = true }
         }
 
         bridge.onPresenceChange = { [weak self] present in
@@ -171,8 +182,11 @@ final class AppState: ObservableObject {
         // and nothing inside Chrome reliably brings it back. Perch holds the
         // DevTools pipe, so it does the reviving itself rather than leaving the
         // app sitting there looking broken.
+        // Also covers deliberate removal, not just an idle worker: without an
+        // enterprise lock available, putting it back is the only enforcement
+        // there is.
         if managedChromeRunning, !extensionPresent, tickCount % 5 == 0 {
-            Task { await launcher.reviveExtension() }
+            Task { await launcher.ensureExtensionLoaded() }
         }
 
         // If the managed Chrome went away, stop claiming to mirror it.
@@ -309,6 +323,14 @@ final class AppState: ObservableObject {
                 lastError = error.localizedDescription
             }
             isLaunchingChrome = false
+        }
+    }
+
+    func checkForAppUpdate() {
+        Task {
+            let result = await AppUpdater.checkAndInstall()
+            appUpdateStatus = result.describedForUser
+            if case .installed = result { appUpdateReady = true }
         }
     }
 

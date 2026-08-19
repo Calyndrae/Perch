@@ -112,6 +112,41 @@ Chrome it started.
 
 ---
 
+## Updating
+
+Both halves update themselves from GitHub every time Perch opens — the app and
+the extension. **Settings → Updates** shows both versions and has a **Check Now**
+if you're impatient.
+
+An update is only installed if it carries **the same signature as the copy you're
+running**, so a tampered or substituted download is discarded and the working
+copy is left alone. The old version goes to the Trash rather than being deleted.
+
+The swap happens on disk; the running copy keeps going until you relaunch, so an
+update never pulls the app out from under you mid-session.
+
+One bootstrap note: self-updating only works from a version that already has it,
+so anything at **0.9.0 or earlier must be replaced by hand once**.
+
+---
+
+## Can the extension be locked so nobody removes it?
+
+Not with a real *"Installed by your administrator"* lock. Chrome refuses to
+force-install an off-store extension on a machine that isn't enterprise-managed —
+its own words: *"this computer is not managed by an enterprise, so policy can
+only install extensions from the Chrome Web Store."* That would need publishing
+to the Web Store, or genuine MDM enrolment.
+
+What happens instead: Perch notices within a few seconds that its extension has
+gone and loads it again, and it reloads everything at every launch regardless. So
+removing it in `chrome://extensions` lasts until Perch next looks, and never
+survives a restart.
+
+Verified by having the extension uninstall itself — workers went 1 → 0 → 1.
+
+---
+
 ## Adding your own extensions
 
 Perch's Chrome runs on its own profile, so whatever you have installed in your

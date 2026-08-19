@@ -501,6 +501,34 @@ final class ChromeLauncher {
     /// Perch already holds the DevTools pipe, so it can simply reach in and
     /// restart the worker itself. Evaluating in a worker target is what revives
     /// it; calling connect() then re-establishes the port.
+    /// Puts the extension back if it has been removed, and wakes it if it is
+    /// merely asleep.
+    ///
+    /// Chrome will not let a non-enterprise machine force-install an off-store
+    /// extension, so there is no "installed by your administrator" lock to be
+    /// had. What there is: Perch holds the DevTools pipe, so it can notice the
+    /// extension is gone and load it again. Removing it in chrome://extensions
+    /// therefore lasts until Perch next looks, and never survives a restart.
+    @discardableResult
+    func ensureExtensionLoaded() async -> Bool {
+        // A worker that exists but is idle only needs waking.
+        if await reviveExtension() { return true }
+
+        // No worker for our id means it is not installed any more.
+        guard let path = Self.extensionPath else { return false }
+        do {
+            let id = try await loadUnpacked(path: path)
+            NSLog("%@", "[Perch] extension was missing; loaded it again (\(id))")
+            for extra in UserExtensions.enabledPaths {
+                _ = try? await loadUnpacked(path: extra)
+            }
+            return true
+        } catch {
+            NSLog("%@", "[Perch] could not reload the extension: \(error.localizedDescription)")
+            return false
+        }
+    }
+
     @discardableResult
     func reviveExtension() async -> Bool {
         guard let targets = try? await call("Target.getTargets"),

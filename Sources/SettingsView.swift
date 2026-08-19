@@ -43,6 +43,8 @@ struct SettingsView: View {
                 Text("Status")
             }
 
+            updatesSection
+
             extensionsSection
 
             uninstallSection
@@ -66,6 +68,37 @@ struct SettingsView: View {
                  : "Everything listed goes to the Trash. Perch's Chrome profile is kept, so "
                  + "your logins there survive.\n\nNothing is erased; you can put it back "
                  + "from the Trash.")
+        }
+    }
+
+    // MARK: - Updates
+
+    @ViewBuilder private var updatesSection: some View {
+        Section {
+            LabeledContent("Perch") {
+                Text(AppUpdater.currentVersion).font(.caption).foregroundStyle(.secondary)
+            }
+            LabeledContent("Extension") {
+                Text(state.extensionVersion ?? "—").font(.caption).foregroundStyle(.secondary)
+            }
+            if let status = state.appUpdateStatus {
+                Text(status).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button("Check Now") { state.checkForAppUpdate() }
+                if state.appUpdateReady {
+                    Button("Relaunch to Finish") { state.relaunchPerch() }
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+            Text("Both the app and the extension update themselves from GitHub each time "
+               + "Perch opens. An update only installs if it carries the same signature as "
+               + "the copy you're running.")
+                .font(.caption).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        } header: {
+            Text("Updates")
         }
     }
 
