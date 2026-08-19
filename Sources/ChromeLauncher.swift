@@ -190,10 +190,21 @@ final class ChromeLauncher {
         cArgs.append(nil)
         defer { cArgs.forEach { free($0) } }
 
-        // Chrome is extremely chatty on stderr and would otherwise bury
-        // Perch's own logging in its updater output.
-        posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0)
-        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+        // Chrome's output goes to a file rather than /dev/null.
+        //
+        // It was discarded because Chrome's updater chatter buried Perch's own
+        // logging — but when Chrome dies at launch, the reason it prints is the
+        // only thing that explains why. A crash report shows SIGTRAP and an
+        // unsymbolicated stack; the CHECK message that names the cause is on
+        // stderr, and throwing it away made the failure undiagnosable.
+        let logPath = Perch.chromeLogPath
+        try? FileManager.default.createDirectory(
+            at: Perch.supportDirectory, withIntermediateDirectories: true)
+        // Truncate per launch so the file is about this run, not every run.
+        posix_spawn_file_actions_addopen(&actions, 1, logPath,
+                                         O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+        posix_spawn_file_actions_addopen(&actions, 2, logPath,
+                                         O_WRONLY | O_CREAT | O_APPEND, 0o644)
 
         var pid: pid_t = 0
         let rc = posix_spawn(&pid, executable, &actions, &attrs, &cArgs, environ)
@@ -220,6 +231,12 @@ final class ChromeLauncher {
     /// Chrome instance that happens to be running.
     private func waitForChrome() async throws {
         for _ in 0..<60 {                       // up to 15s
+            // If Chrome has already exited, waiting the full 15s just turns a
+            // crash into a confusing timeout. Say what actually happened, and
+            // quote what Chrome printed on its way out.
+            if chromePID != 0, kill(chromePID, 0) != 0, errno == ESRCH {
+                throw LaunchError.chromeDiedAtLaunch(Self.lastChromeLogTail())
+            }
             guard chromePID != 0, kill(chromePID, 0) == 0 else {
                 try await Task.sleep(nanoseconds: 250_000_000)
                 continue
@@ -487,7 +504,18 @@ final class ChromeLauncher {
         chromePID = 0
     }
 
+    /// The last few lines Chrome printed, for error messages and bug reports.
+    static func lastChromeLogTail(_ lines: Int = 6) -> String {
+        guard let text = try? String(contentsOfFile: Perch.chromeLogPath, encoding: .utf8)
+        else { return "(nothing logged)" }
+        let useful = text
+            .split(separator: "\n")
+            .filter { !$0.contains("GoogleUpdater") && !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return useful.suffix(lines).joined(separator: "\n")
+    }
+
     enum LaunchError: LocalizedError {
+        case chromeDiedAtLaunch(String)
         case extensionMissingFromBundle
         case chromeWouldNotQuit
         case chromeDidNotStart
@@ -500,6 +528,8 @@ final class ChromeLauncher {
 
         var errorDescription: String? {
             switch self {
+            case .chromeDiedAtLaunch(let tail):
+                return "Chrome quit immediately after starting.\n\nWhat Chrome printed:\n\(tail)"
             case .extensionMissingFromBundle:
                 return "Perch.app is missing its bundled extension. Rebuild with ./build.sh."
             case .chromeWouldNotQuit:

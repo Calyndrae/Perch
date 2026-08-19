@@ -38,6 +38,12 @@ enum Perch {
         supportDirectory.appendingPathComponent("ChromeProfile", isDirectory: true).path
     }
 
+    /// Where Chrome's own output is kept. Perch launches Chrome with inherited
+    /// pipes, so this is the only place Chrome's startup failures are visible.
+    static var chromeLogPath: String {
+        supportDirectory.appendingPathComponent("chrome.log").path
+    }
+
     static var bridgeSocketPath: String {
         supportDirectory.appendingPathComponent("bridge.sock").path
     }
