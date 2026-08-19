@@ -3,11 +3,24 @@ import Foundation
 
 /// Hands TCC responsibility to the spawned process instead of keeping it.
 ///
-/// Not public API, but it is the documented-by-practice mechanism every
-/// terminal emulator and launcher uses, and it is stable across macOS releases.
-@_silgen_name("responsibility_spawnattrs_setdisclaim")
-private func responsibility_spawnattrs_setdisclaim(
-    _ attrs: UnsafeMutablePointer<posix_spawnattr_t?>, _ disclaim: Int32) -> Int32
+/// Looked up at runtime, deliberately. This is a private symbol, and binding it
+/// with @_silgen_name makes it a hard link-time dependency: on any macOS where
+/// it is absent or renamed, the process dies resolving it rather than carrying
+/// on without it. A dlsym lookup degrades to nil instead, and the usage strings
+/// in Info.plist cover the case where disclaiming is unavailable.
+private typealias DisclaimFn =
+    @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
+
+private let spawnattrsSetDisclaim: DisclaimFn? = {
+    // RTLD_DEFAULT — search every already-loaded image.
+    let handle = UnsafeMutableRawPointer(bitPattern: -2)
+    guard let symbol = dlsym(handle, "responsibility_spawnattrs_setdisclaim") else {
+        NSLog("%@", "[Perch] responsibility_spawnattrs_setdisclaim unavailable on this macOS; "
+            + "relying on Info.plist usage strings instead")
+        return nil
+    }
+    return unsafeBitCast(symbol, to: DisclaimFn.self)
+}()
 
 /// Launches Chrome with the extension already loaded, with no clicks from you.
 ///
@@ -138,10 +151,12 @@ final class ChromeLauncher {
         var attrs: posix_spawnattr_t?
         posix_spawnattr_init(&attrs)
         defer { posix_spawnattr_destroy(&attrs) }
-        let disclaimed = responsibility_spawnattrs_setdisclaim(&attrs, 1)
+        let disclaimed = spawnattrsSetDisclaim?(&attrs, 1) ?? -1
         if disclaimed != 0 {
+            // Not fatal any more: Perch stays TCC-responsible, and the usage
+            // strings in its Info.plist are what stop macOS killing Chrome.
             NSLog("%@", "[Perch] could not disclaim TCC responsibility (\(disclaimed)); "
-                + "Chrome may be killed when it asks for the microphone or camera")
+                + "falling back to Info.plist usage strings")
         }
 
         var actions: posix_spawn_file_actions_t?
