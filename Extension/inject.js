@@ -375,6 +375,38 @@
         return stream;
       };
 
+      // Domains Perch has been told may have the real thing. Listening rather
+      // than asking, because the answer has to already be here: getDisplayMedia
+      // must be reached inside the click that triggered it.
+      let allowedHosts = null;
+      let markAllowlistKnown;
+      const allowlistKnown = new Promise((resolve) => { markAllowlistKnown = resolve; });
+      try {
+        win.addEventListener('message', (event) => {
+          if (event.source !== win) return;
+          const d = event.data;
+          if (!d || d.type !== 'perch:allowlist' || !Array.isArray(d.hosts)) return;
+          allowedHosts = d.hosts;
+          markAllowlistKnown(d.hosts);
+        });
+      } catch (_) {}
+
+      // A domain covers itself and everything under it: example.com allows
+      // login.example.com, and does NOT allow notexample.com or
+      // example.com.somewhereelse.net. Matched against the realm that actually
+      // receives the stream, which for an embed is the frame, not the page
+      // around it.
+      const hostIsAllowed = (hosts) => {
+        if (!hosts || !hosts.length) return false;
+        let host = '';
+        try { host = String(win.location.hostname || '').toLowerCase(); } catch (_) { return false; }
+        if (!host) return false;
+        return hosts.some((d) => {
+          const domain = String(d || '').toLowerCase();
+          return domain && (host === domain || host.endsWith('.' + domain));
+        });
+      };
+
       // The picker is shown for real, and this tab is substituted underneath.
       //
       // Suppressing the picker outright broke sites: one refused entry because
@@ -387,7 +419,19 @@
       const patchedGetDisplayMedia = function getDisplayMedia(constraints) {
         const wanted = constraints || { video: true };
 
-        return nativeGDM(wanted).then((chosen) => {
+        return nativeGDM(wanted).then(async (chosen) => {
+          // Decided AFTER the native call, never before: the call has to happen
+          // inside the user's click or Chrome refuses it, and there is no room
+          // to wait for anything first. By the time the picker has been answered
+          // the list has long since arrived.
+          const hosts = allowedHosts !== null
+            ? allowedHosts
+            : await Promise.race([
+                allowlistKnown,
+                new Promise((r) => setTimeout(() => r([]), 1200)),
+              ]);
+          if (hostIsAllowed(hosts)) return chosen;   // genuinely allowed: hands off
+
           // Whatever it really captured is stopped at once, before a single
           // frame can be read out of it.
           try { chosen.getTracks().forEach((t) => t.stop()); } catch (_) {}

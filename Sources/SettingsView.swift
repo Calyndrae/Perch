@@ -8,8 +8,22 @@ struct SettingsView: View {
     @State private var extraError: String?
     @State private var removeProfile = false
     @State private var confirming = false
+    @State private var newDomain = ""
+    @State private var domainError: String?
+    @State private var copiedChars: Int?
     @State private var busy = false
     @State private var report: String?
+
+    private func addDomain() {
+        let raw = newDomain
+        if state.addAllowedDomain(raw) {
+            newDomain = ""
+            domainError = nil
+        } else {
+            domainError = "“\(raw.trimmingCharacters(in: .whitespaces))” isn't a domain. "
+                        + "Try something like example.com."
+        }
+    }
 
     var body: some View {
         Form {
@@ -24,6 +38,70 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             } header: {
                 Text("Interaction")
+            }
+
+            Section {
+                HStack {
+                    TextField("example.com", text: $newDomain)
+                        .onSubmit { addDomain() }
+                    Button("Allow", action: addDomain)
+                        .disabled(newDomain.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+
+                if let domainError {
+                    Text(domainError).font(.caption).foregroundStyle(.red)
+                }
+
+                if state.screenShareAllowlist.isEmpty {
+                    Text("Nothing listed — every site gets its own tab and nothing else.")
+                        .font(.caption).foregroundStyle(.tertiary)
+                } else {
+                    ForEach(state.screenShareAllowlist, id: \.self) { domain in
+                        HStack {
+                            Text(domain)
+                            Spacer()
+                            Button("Remove") { state.removeAllowedDomain(domain) }
+                                .buttonStyle(.borderless)
+                        }
+                    }
+                }
+
+                Text("Sites listed here get the screen you actually pick, including "
+                   + "your whole display — the protection is off for them. Everything "
+                   + "else still gets its own tab.\n\n"
+                   + "A domain covers everything under it: **example.com** also allows "
+                   + "**login.example.com** and **hi.example.com**, on any page. It does "
+                   + "not allow **notexample.com**.\n\n"
+                   + "Add one only when a site genuinely needs to see a real screen and "
+                   + "breaks without it.")
+                    .font(.caption).foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("Sites allowed a real screen share")
+            }
+
+            Section {
+                Button("Copy Diagnostics") {
+                    let text = state.copyDiagnostics()
+                    copiedChars = text.count
+                }
+
+                if let copiedChars {
+                    Text("Copied \(copiedChars) characters to the clipboard. Paste it "
+                       + "anywhere — versions, permission state, your settings, any "
+                       + "Chrome crash reports from the last hour, and the tail of "
+                       + "Chrome's own log.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Everything needed to work out why Perch is misbehaving, in "
+                       + "one paste: versions, permission state, settings, recent Chrome "
+                       + "crash reports and the tail of Chrome's log.")
+                        .font(.caption).foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } header: {
+                Text("Diagnostics")
             }
 
             Section {

@@ -111,6 +111,9 @@ a fresh Perch needs a fresh Chrome. Same profile, nothing lost.
 **Chrome opened from the Dock** → that one has no extension. Perch can only use the
 Chrome it started.
 
+**Anything else** → **Settings → Diagnostics → Copy Diagnostics** and read what it
+says. It gathers the things worth knowing without anyone having to run a script.
+
 ---
 
 ## Updating
@@ -212,6 +215,42 @@ removing it in `chrome://extensions` lasts until Perch next looks, and never
 survives a restart.
 
 Verified by having the extension uninstall itself — workers went 1 → 0 → 1.
+
+---
+
+## Letting one site have the real thing
+
+The substitution fails closed, which is right almost always and wrong for the one
+site that genuinely needs to show a whole screen. **Settings → Sites allowed a
+real screen share** is the escape hatch: anything listed gets the screen you
+actually picked, including your whole display.
+
+A domain covers everything under it. `example.com` also allows
+`login.example.com`, `hi.example.com` and `deep.a.example.com`, on any path — and
+does **not** allow `notexample.com`, `example.org` or `example.com.evil.test`.
+Verified against all eight of those.
+
+Matching is against the frame that actually receives the stream, so allowing
+`example.com` does not quietly allow a third-party player it embeds.
+
+---
+
+## When something breaks
+
+**Settings → Diagnostics → Copy Diagnostics** puts everything on the clipboard:
+versions of Perch, the extension, Chrome and macOS; whether Screen Recording is
+granted and the extension connected; your settings; which files exist; **any
+Chrome crash reports from the last hour**, summarised to the fields that matter;
+and the tail of Chrome's own log.
+
+That last part exists because the alternative was real — diagnosing a Chrome that
+quit on another Mac meant talking someone through curling shell scripts from
+GitHub, and a stale cached copy of one of those scripts sent the whole
+investigation down the wrong path for an afternoon.
+
+**Chrome quitting is no longer silent.** If the Chrome Perch started goes away
+without being asked to, Perch says so, how long it had been running, and quotes
+the line where Chrome gave up — or the crash report, if one was written.
 
 ---
 

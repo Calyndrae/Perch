@@ -14,6 +14,23 @@
   const RESPONSE = 'perch:tab-stream-response';
   const FULLSCREEN = 'perch:fullscreen';
   const CAPTURE = 'perch:capture';
+  const ALLOWLIST = 'perch:allowlist';
+
+  // Fetched immediately rather than on demand: getDisplayMedia must be reached
+  // inside the click that triggered it, so there is no room to go asking then.
+  const sendAllowlist = () => {
+    try {
+      chrome.runtime.sendMessage({ type: 'perch:allowlist-request' }, (reply) => {
+        if (chrome.runtime.lastError) return;
+        window.postMessage({ type: ALLOWLIST, hosts: (reply && reply.hosts) || [] },
+                           window.location.origin === 'null' ? '*' : window.location.origin);
+      });
+    } catch (_) {}
+  };
+  sendAllowlist();
+  // The service worker may have been asleep and answered with a stale empty
+  // list; one retry covers the wake-up.
+  setTimeout(sendAllowlist, 1500);
 
   window.addEventListener('message', (event) => {
     const data = event.data;

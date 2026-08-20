@@ -44,6 +44,7 @@ struct BridgeHost {
                 if let pending = perchDefault("PerchPendingUpdateVersion") as? String {
                     reply["updateInstalled"] = pending
                 }
+                reply["allowlist"] = (perchDefault("PerchScreenShareAllowlist") as? [String]) ?? []
                 send(reply)
             } else {
                 send(["ok": false, "error": "unknown message type: \(type)"])

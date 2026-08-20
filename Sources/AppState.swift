@@ -86,6 +86,45 @@ final class AppState: ObservableObject {
     @Published var forwardInput = true {
         didSet { mirrorWindow?.mirrorView.forwardsInput = forwardInput }
     }
+    /// Sites allowed a genuine screen share, by registrable domain.
+    ///
+    /// The substitution fails closed, which is right almost always and wrong
+    /// for the one site that actually needs to show you a whole screen. An
+    /// entry covers its subdomains and every path beneath it, so `example.com`
+    /// also means `login.example.com`.
+    @Published var screenShareAllowlist: [String] =
+        UserDefaults.standard.stringArray(forKey: "PerchScreenShareAllowlist") ?? [] {
+        didSet { UserDefaults.standard.set(screenShareAllowlist, forKey: "PerchScreenShareAllowlist") }
+    }
+
+    /// Accepts whatever someone pastes — a bare domain, a full URL, a trailing
+    /// slash — and keeps the host. Returns nil if there is no host in it.
+    func addAllowedDomain(_ raw: String) -> Bool {
+        guard let host = Self.normaliseDomain(raw) else { return false }
+        guard !screenShareAllowlist.contains(host) else { return true }
+        screenShareAllowlist.append(host)
+        screenShareAllowlist.sort()
+        return true
+    }
+
+    func removeAllowedDomain(_ host: String) {
+        screenShareAllowlist.removeAll { $0 == host }
+    }
+
+    static func normaliseDomain(_ raw: String) -> String? {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !text.isEmpty else { return nil }
+        if let range = text.range(of: "://") { text = String(text[range.upperBound...]) }
+        text = text.components(separatedBy: "/")[0]        // drop any path
+        text = text.components(separatedBy: "@").last ?? text
+        text = text.components(separatedBy: ":")[0]        // drop any port
+        text = text.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard text.contains("."), !text.contains(" "),
+              text.range(of: "^[a-z0-9.-]+$", options: .regularExpression) != nil
+        else { return nil }
+        return text
+    }
+
     /// Put the Chrome window fullscreen for as long as a site is capturing, so
     /// the tab strip and address bar collapse and only Chrome's sharing bar is
     /// left. Read by the extension through the native host at the moment it
@@ -221,6 +260,14 @@ final class AppState: ObservableObject {
         // measured once. updateCrop ignores anything that hasn't really changed.
         if isMirroring, cropMirrorToPage, tickCount % 2 == 0 {
             Task { await recrop() }
+        }
+
+        // Chrome dying after a successful start used to be silent: the window
+        // list simply emptied. Say what happened, once, with a reason.
+        if let report = launcher.noticeUnexpectedChromeExit() {
+            lastError = report
+            managedChromeRunning = false
+            NSLog("%@", "[Perch] \(report)")
         }
 
         // If the managed Chrome went away, stop claiming to mirror it.
@@ -369,6 +416,26 @@ final class AppState: ObservableObject {
             }
             isLaunchingChrome = false
         }
+    }
+
+    /// Everything about this machine's Perch, on the clipboard.
+    @discardableResult
+    func copyDiagnostics() -> String {
+        let text = Diagnostics.copyToClipboard(.init(
+            screenRecordingGranted: screenRecordingGranted,
+            extensionPresent: extensionPresent,
+            managedChromeRunning: managedChromeRunning,
+            extensionVersion: extensionVersion,
+            appUpdateStatus: appUpdateStatus,
+            updateStatus: updateStatus,
+            lastError: lastError,
+            forwardInput: forwardInput,
+            cropMirrorToPage: cropMirrorToPage,
+            autoFullscreenOnShare: autoFullscreenOnShare,
+            allowlist: screenShareAllowlist,
+            windowCount: windows.count))
+        NSLog("%@", "[Perch] diagnostics copied (\(text.count) characters)")
+        return text
     }
 
     func checkForAppUpdate() {

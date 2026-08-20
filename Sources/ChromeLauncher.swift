@@ -47,6 +47,12 @@ private let spawnattrsSetDisclaim: DisclaimFn? = {
 /// offering to relaunch Chrome through Perch.
 final class ChromeLauncher {
     private var chromePID: pid_t = 0
+    /// When the managed Chrome started, so "it died after 2s" can be told apart
+    /// from "it ran all afternoon and then quit".
+    private var chromeStartedAt: Date?
+    /// Set while Perch is closing Chrome on purpose, so a deliberate quit is
+    /// never reported as a crash.
+    private var expectingChromeExit = false
     private var writeFD: Int32 = -1
     private var readFD: Int32 = -1
     private var nextID = 0
@@ -110,6 +116,7 @@ final class ChromeLauncher {
     }
 
     private func quitChrome() async throws {
+        expectingChromeExit = true
         let running = WindowPicker.chromeInstances()
         guard !running.isEmpty else { return }
         running.forEach { $0.terminate() }
@@ -246,6 +253,8 @@ final class ChromeLauncher {
         }
 
         chromePID = pid
+        chromeStartedAt = Date()
+        expectingChromeExit = false
         writeFD = toChrome[1]
         readFD = fromChrome[0]
         lastReloadAttempt = nil
@@ -623,11 +632,64 @@ final class ChromeLauncher {
     }
 
     func shutdown() {
+        expectingChromeExit = true
         if writeFD >= 0 { close(writeFD); writeFD = -1 }
         if readFD >= 0 { close(readFD); readFD = -1 }
         // Chrome is left running deliberately — quitting the user's browser
         // because Perch closed would be rude.
         chromePID = 0
+    }
+
+    /// Reports the managed Chrome having gone away, once, and says what for.
+    ///
+    /// Until now Chrome dying after a successful start was completely silent:
+    /// the window list emptied, the gate flipped to "Perch hasn't started
+    /// Chrome yet", and nothing anywhere said the browser had crashed — which
+    /// is exactly the shape of the bug that has been open on the other Mac.
+    /// Returns nil while Chrome is alive, and for a quit Perch asked for.
+    func noticeUnexpectedChromeExit() -> String? {
+        guard chromePID != 0 else { return nil }
+        guard kill(chromePID, 0) != 0, errno == ESRCH else { return nil }
+
+        let lifetime = chromeStartedAt.map { Date().timeIntervalSince($0) }
+        chromePID = 0
+        chromeStartedAt = nil
+        guard !expectingChromeExit else { expectingChromeExit = false; return nil }
+
+        var report = "The Chrome Perch started has quit"
+        if let lifetime {
+            report += lifetime < 60
+                ? String(format: " after %.0f seconds", lifetime)
+                : String(format: " after %.0f minutes", lifetime / 60)
+        }
+        report += ".\n\n"
+
+        if let fatal = Self.fatalChromeLogLine() {
+            report += "Chrome's own explanation:\n\(fatal)\n\n"
+        } else if let crash = CrashReports.newestChromeCrash() {
+            report += "A crash report was written:\n\(crash)\n\n"
+        } else {
+            report += "Nothing fatal was logged, so it may simply have been "
+                    + "closed.\n\nLast output:\n\(Self.lastChromeLogTail())\n\n"
+        }
+
+        report += "Press “Set Up Chrome Now” to start it again. "
+                + "Settings → Diagnostics copies the full details."
+        return report
+    }
+
+    /// The line where Chrome says it is giving up, if there is one. Chrome
+    /// prints a great deal that looks alarming and means nothing, so this looks
+    /// only for the markers that actually precede a termination.
+    static func fatalChromeLogLine() -> String? {
+        guard let text = try? String(contentsOfFile: Perch.chromeLogPath, encoding: .utf8)
+        else { return nil }
+        let markers = ["FATAL", "Check failed", "CHECK failed", "DCHECK",
+                       "Aborted", "SIGTRAP", "SIGSEGV", "SIGABRT"]
+        let hit = text.split(separator: "\n").last { line in
+            markers.contains { line.contains($0) }
+        }
+        return hit.map(String.init)
     }
 
     /// The last few lines Chrome printed, for error messages and bug reports.

@@ -140,6 +140,11 @@ function notifyOnce() {
   }, () => void chrome.runtime.lastError);
 }
 
+// Domains Perch says may have a genuine screen share. Empty until the host
+// answers, which is the safe direction: an unknown list means everything keeps
+// getting its own tab.
+let allowlist = [];
+
 let pendingStatus = null;
 
 /// Latest answer from Perch, asked for fresh. Falls back to "yes" if the host
@@ -172,6 +177,7 @@ function connect() {
     retryDelay = 1000;
     if (pendingStatus) pendingStatus(msg || {});
     if (msg && msg.updateInstalled) announceUpdate(msg.updateInstalled);
+    if (msg && Array.isArray(msg.allowlist)) allowlist = msg.allowlist;
     if (msg && msg.appRunning) startInjecting();
     else stopInjecting('app reported not running');
   });
@@ -299,6 +305,12 @@ chrome.windows.onRemoved.addListener((id) => {
 // else. The id also expires within seconds if unused.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return;
+  // The page's content script asks for this at document_start, so the answer
+  // is already in hand by the time anyone clicks a share button.
+  if (msg.type === 'perch:allowlist-request') {
+    sendResponse({ hosts: allowlist });
+    return;
+  }
   if (msg.type === 'perch:fullscreen') {
     if (injecting) wantFullscreen(sender.tab && sender.tab.windowId, 'page', msg.on);
     return;
