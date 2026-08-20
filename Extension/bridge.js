@@ -13,17 +13,30 @@
   const REQUEST = 'perch:tab-stream-request';
   const RESPONSE = 'perch:tab-stream-response';
   const FULLSCREEN = 'perch:fullscreen';
+  const CAPTURE = 'perch:capture';
 
   window.addEventListener('message', (event) => {
-    // Only this page may ask; ignore anything relayed in from a frame.
-    if (event.source !== window) return;
     const data = event.data;
     if (!data) return;
+
+    // The capture note is posted to the top window, so in a framed page its
+    // source is the frame rather than this window. It carries no payload worth
+    // forging — the worst a page can do with it is ask for the fullscreen it
+    // could request itself — so origin is not checked for this one.
+    if (data.type !== CAPTURE && event.source !== window) return;
 
     // The page went fullscreen. Worth passing on because Chrome refuses to
     // move the window while the tab is captured, leaving the tab strip and
     // address bar on screen for the whole share; only the service worker can
     // reach chrome.windows and put that right.
+    if (data.type === CAPTURE && typeof data.on === 'boolean') {
+      try {
+        chrome.runtime.sendMessage({ type: CAPTURE, on: data.on },
+                                   () => void chrome.runtime.lastError);
+      } catch (_) {}
+      return;
+    }
+
     if (data.type === FULLSCREEN && typeof data.on === 'boolean') {
       try {
         chrome.runtime.sendMessage({ type: FULLSCREEN, on: data.on },

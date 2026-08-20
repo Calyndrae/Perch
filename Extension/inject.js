@@ -291,6 +291,16 @@
       }
     }
 
+    // Whether a share is running is worth telling the isolated world about:
+    // that is the moment Chrome adds its 56pt sharing bar, and the moment the
+    // window is worth taking fullscreen so the tab strip and address bar go
+    // with it.
+    const announceCapture = (on) => {
+      try {
+        win.top.postMessage({ type: 'perch:capture', on: !!on }, '*');
+      } catch (_) {}
+    };
+
     const beginScreenSpoof = (settings) => {
       const dpr = win.devicePixelRatio || 1;
       if (!settings || !settings.width || !settings.height) return;
@@ -299,10 +309,11 @@
         h: Math.round(settings.height / dpr),
       };
       activeCaptures++;
+      if (activeCaptures === 1) announceCapture(true);
     };
     const endScreenSpoof = () => {
       activeCaptures = Math.max(0, activeCaptures - 1);
-      if (activeCaptures === 0) fakeScreen = null;
+      if (activeCaptures === 0) { fakeScreen = null; announceCapture(false); }
     };
 
     const md = win.navigator && win.navigator.mediaDevices;

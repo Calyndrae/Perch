@@ -114,6 +114,23 @@ function notifyOnce() {
   }, () => void chrome.runtime.lastError);
 }
 
+let pendingStatus = null;
+
+/// Latest answer from Perch, asked for fresh. Falls back to "yes" if the host
+/// doesn't answer, since that is the shipped default and a missed reply should
+/// not silently disable a feature.
+function askPerch(timeoutMs = 1200) {
+  if (!port) return Promise.resolve({ autoFullscreen: true });
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (v) => { if (!settled) { settled = true; pendingStatus = null; resolve(v); } };
+    pendingStatus = finish;
+    try { port.postMessage({ type: 'status' }); }
+    catch (_) { finish({ autoFullscreen: true }); return; }
+    setTimeout(() => finish({ autoFullscreen: true }), timeoutMs);
+  });
+}
+
 function connect() {
   // onStartup, onInstalled and the top-level call can all land in one session;
   // without this guard each spawns its own native host process.
@@ -127,6 +144,7 @@ function connect() {
 
   port.onMessage.addListener((msg) => {
     retryDelay = 1000;
+    if (pendingStatus) pendingStatus(msg || {});
     if (msg && msg.appRunning) startInjecting();
     else stopInjecting('app reported not running');
   });
@@ -193,7 +211,20 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // fullscreened itself, and on the way out it restores the state the window
 // actually had rather than assuming "normal".
 const priorWindowState = new Map();
+const fullscreenReasons = new Map();
 let lastWindowChange = 0;
+
+// Two separate things want the window fullscreen — a page that went fullscreen,
+// and a share that just started — and either can end while the other is still
+// going. Tracking them by name stops the first one to finish from dragging the
+// window back out from under the other.
+async function wantFullscreen(windowId, reason, on) {
+  if (typeof windowId !== 'number') return;
+  let reasons = fullscreenReasons.get(windowId);
+  if (!reasons) { reasons = new Set(); fullscreenReasons.set(windowId, reasons); }
+  if (on) reasons.add(reason); else reasons.delete(reason);
+  await followFullscreen(windowId, reasons.size > 0);
+}
 
 async function followFullscreen(windowId, on) {
   if (typeof windowId !== 'number') return;
@@ -208,6 +239,11 @@ async function followFullscreen(windowId, on) {
       if (win.state === 'fullscreen') return;   // Chrome managed it unaided
       priorWindowState.set(windowId, win.state);
       await chrome.windows.update(windowId, { state: 'fullscreen' });
+      // macOS declines to fullscreen a window belonging to an app that isn't
+      // frontmost, and the call resolves as though it worked. Confirm it, or
+      // the restore at the end of the share would move a window we never moved.
+      const after = await chrome.windows.get(windowId);
+      if (after.state !== 'fullscreen') priorWindowState.delete(windowId);
     } else {
       const prior = priorWindowState.get(windowId);
       if (prior === undefined) return;          // we did not put it there
@@ -219,7 +255,10 @@ async function followFullscreen(windowId, on) {
   }
 }
 
-chrome.windows.onRemoved.addListener((id) => priorWindowState.delete(id));
+chrome.windows.onRemoved.addListener((id) => {
+  priorWindowState.delete(id);
+  fullscreenReasons.delete(id);
+});
 
 // A site asking to record the screen gets its own tab back instead.
 //
@@ -231,7 +270,24 @@ chrome.windows.onRemoved.addListener((id) => priorWindowState.delete(id));
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return;
   if (msg.type === 'perch:fullscreen') {
-    if (injecting) followFullscreen(sender.tab && sender.tab.windowId, msg.on);
+    if (injecting) wantFullscreen(sender.tab && sender.tab.windowId, 'page', msg.on);
+    return;
+  }
+  // A share just started or stopped. Going fullscreen is what collapses the tab
+  // strip and the address bar; Chrome's sharing bar itself cannot be hidden, so
+  // this is as close to a clean window as the browser allows.
+  if (msg.type === 'perch:capture') {
+    const windowId = sender.tab && sender.tab.windowId;
+    if (injecting) {
+      if (!msg.on) {
+        wantFullscreen(windowId, 'capture', false);
+      } else {
+        askPerch().then((status) => {
+          if (status && status.autoFullscreen === false) return;
+          wantFullscreen(windowId, 'capture', true);
+        });
+      }
+    }
     return;
   }
   if (msg.type !== 'perch:tab-stream-request') return;

@@ -35,13 +35,28 @@ struct BridgeHost {
                 send(["ok": true, "echo": type])
             } else if type == "ping" || type == "status" {
                 let alive = appRunning && isSocketAlive(socketFD)
-                send(["ok": true, "appRunning": alive, "echo": type])
+                send(["ok": true, "appRunning": alive, "echo": type,
+                      "autoFullscreen": autoFullscreenOnShare()])
             } else {
                 send(["ok": false, "error": "unknown message type: \(type)"])
             }
         }
 
         if socketFD >= 0 { close(socketFD) }
+    }
+
+    /// Read straight from Perch's own preferences rather than over the socket.
+    ///
+    /// The socket only carries extension -> app, and this process spends its
+    /// life blocked reading Chrome's stdin, so there is no moment at which it
+    /// could receive a pushed setting. Reading the plist on demand means a
+    /// change in Settings reaches the extension the next time it asks, which is
+    /// immediately before it would act on it.
+    private static func autoFullscreenOnShare() -> Bool {
+        guard let defaults = UserDefaults(suiteName: "com.trixarh.perch"),
+              let value = defaults.object(forKey: "PerchAutoFullscreenOnShare") as? Bool
+        else { return true }   // shipped default
+        return value
     }
 
     private static func relay(_ object: [String: Any], to fd: Int32) {

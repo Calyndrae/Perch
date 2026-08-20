@@ -27,6 +27,16 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Go fullscreen while a site is sharing", isOn: $state.autoFullscreenOnShare)
+
+                Text("The moment a site starts recording your tab, Chrome adds a "
+                   + "“Sharing this tab to …” bar that can't be closed. Fullscreen "
+                   + "hides the tab strip and address bar around it, so that bar is "
+                   + "all that's left — and the window goes back exactly as it was "
+                   + "when the share ends.")
+                    .font(.caption).foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 Toggle("Show only the page in the mirror", isOn: $state.cropMirrorToPage)
 
                 Text("Crops the tab strip, the address bar and the "

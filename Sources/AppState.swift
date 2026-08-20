@@ -86,6 +86,14 @@ final class AppState: ObservableObject {
     @Published var forwardInput = true {
         didSet { mirrorWindow?.mirrorView.forwardsInput = forwardInput }
     }
+    /// Put the Chrome window fullscreen for as long as a site is capturing, so
+    /// the tab strip and address bar collapse and only Chrome's sharing bar is
+    /// left. Read by the extension through the native host at the moment it
+    /// acts, so a change here takes effect on the next share rather than the
+    /// next restart.
+    @Published var autoFullscreenOnShare = UserDefaults.standard.object(forKey: "PerchAutoFullscreenOnShare") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(autoFullscreenOnShare, forKey: "PerchAutoFullscreenOnShare") }
+    }
     /// Crop the tab strip, address bar and "Sharing this tab" indicator out of
     /// the mirror, leaving only the page.
     ///

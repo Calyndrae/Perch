@@ -156,6 +156,15 @@ something Perch broke. But it is something Perch can undo: the extension
 promotes the window itself, and puts it back exactly as it found it afterwards.
 Browser UI drops from 87px to 56px, and the capture survives the transition.
 
+**Perch goes fullscreen for the length of the share.** The moment a site starts
+capturing, the Chrome window goes fullscreen — tab strip and address bar
+collapse, leaving the sharing bar alone — and the window returns to exactly the
+state it was in when the share ends. Measured: browser UI 143px → 56px within a
+second, and back to 87px on release. **Settings → Mirror** turns it off.
+
+A page that goes fullscreen during a share is tracked separately, so whichever
+of the two ends first doesn't drag the window out from under the other.
+
 **The mirror crops all of it away.** Perch's floating mirror now shows the page
 and nothing else — no tab strip, no address bar, no sharing bar. It's on by
 default; **Settings → Mirror** turns it off if you'd rather see the whole window.
