@@ -86,6 +86,19 @@ final class AppState: ObservableObject {
     @Published var forwardInput = true {
         didSet { mirrorWindow?.mirrorView.forwardsInput = forwardInput }
     }
+    /// Crop the tab strip, address bar and "Sharing this tab" indicator out of
+    /// the mirror, leaving only the page.
+    ///
+    /// Chrome's sharing bar cannot be closed or suppressed — measured against
+    /// every flag that claims to, and the extension route that avoids it needs
+    /// an activeTab grant a UI-less extension can never get. Cropping is what's
+    /// left, and it is the only thing that removes it from view outright.
+    @Published var cropMirrorToPage = UserDefaults.standard.object(forKey: "PerchCropMirror") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(cropMirrorToPage, forKey: "PerchCropMirror")
+            Task { await recrop() }
+        }
+    }
     @Published private(set) var isLaunchingChrome = false
     @Published private(set) var extensionVersion: String?
     @Published private(set) var updateStatus: String?
@@ -189,6 +202,13 @@ final class AppState: ObservableObject {
             Task { await launcher.ensureExtensionLoaded() }
         }
 
+        // The page area moves under us — the sharing bar alone takes 56pt the
+        // moment a site starts capturing — so the crop is re-read rather than
+        // measured once. updateCrop ignores anything that hasn't really changed.
+        if isMirroring, cropMirrorToPage, tickCount % 2 == 0 {
+            Task { await recrop() }
+        }
+
         // If the managed Chrome went away, stop claiming to mirror it.
         if isMirroring, !stream.isRunning {
             isMirroring = false
@@ -278,11 +298,15 @@ final class AppState: ObservableObject {
 
         Task {
             do {
-                try await stream.start(windowID: windowID)
-                // Bind input to the tab actually showing in this window.
+                // Attach BEFORE streaming: the crop comes from the page, so the
+                // first frame is already trimmed rather than showing a tab strip
+                // for a moment and then snapping.
+                var fraction: (x: Double, y: Double, w: Double, h: Double)?
                 if let w = windows.first(where: { $0.id == windowID }) {
                     _ = try? await launcher.attachToPage(showingIn: w.frame)
+                    if cropMirrorToPage { fraction = await launcher.pageInsetFractions() }
                 }
+                try await stream.start(windowID: windowID, pageFraction: fraction)
                 isMirroring = true
                 mirroredWindowID = windowID
                 window.makeKeyAndOrderFront(nil)
@@ -291,6 +315,13 @@ final class AppState: ObservableObject {
                 isMirroring = false
             }
         }
+    }
+
+    private func recrop() async {
+        guard isMirroring else { return }
+        let windowFrame = windows.first(where: { $0.id == mirroredWindowID })?.frame
+        let fraction = cropMirrorToPage ? await launcher.pageInsetFractions() : nil
+        await stream.updateCrop(fraction, windowFrame: windowFrame)
     }
 
     func stopMirroring() {

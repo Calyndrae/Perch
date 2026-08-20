@@ -443,12 +443,60 @@ final class ChromeLauncher {
               let g = try? JSONSerialization.jsonObject(with: data) as? [String: Double]
         else { return }
 
-        let borders = ((g["ow"] ?? 0) - (g["iw"] ?? 0)) / 2       // side chrome, usually 0
-        let chromeHeight = (g["oh"] ?? 0) - (g["ih"] ?? 0)         // tab strip + omnibox
+        // outer* stay in device-independent points; inner* are CSS pixels and
+        // shrink as the page is zoomed in. Subtracting one from the other
+        // directly would therefore read a zoomed page as having an enormous
+        // tab strip. macOS Chrome draws no side borders, so the width pair
+        // gives us the zoom factor for free, and at 100% this is arithmetically
+        // identical to the plain subtraction it replaces.
+        let ow = g["ow"] ?? 0, iw = g["iw"] ?? 0
+        let oh = g["oh"] ?? 0, ih = g["ih"] ?? 0
+        let zoom = (iw > 0 && ow > 0) ? ow / iw : 1
+        let borders = (ow - iw * zoom) / 2                         // side chrome, usually 0
+        let chromeHeight = max(0, oh - ih * zoom)                  // tab strip + omnibox
         viewportOffset = CGPoint(x: (g["sx"] ?? 0) + borders,
                                  y: (g["sy"] ?? 0) + chromeHeight)
-        viewportSize = CGSize(width: g["iw"] ?? 0, height: g["ih"] ?? 0)
-        NSLog("%@", "[Perch] viewport origin=\(viewportOffset!) size=\(viewportSize!)")
+        viewportSize = CGSize(width: iw * zoom, height: ih * zoom)
+        NSLog("%@", "[Perch] viewport origin=\(viewportOffset!) size=\(viewportSize!) zoom=\(zoom)")
+    }
+
+    /// Where the page sits inside its window, as fractions of that window:
+    /// everything that isn't tab strip, address bar or the "Sharing this tab"
+    /// indicator.
+    ///
+    /// Fractions rather than screen coordinates, deliberately. Chrome's
+    /// `window.screenX` and ScreenCaptureKit's `SCWindow.frame` do not always
+    /// describe the same window in the same units — measured at 1081x878
+    /// against 1200x975 for one window, a ~0.9 factor with an origin that
+    /// transforms neither way. A fraction of the window is the same fraction
+    /// whichever space you measure it in, so the caller applies it to the rect
+    /// ScreenCaptureKit already gave it and nothing is ever converted.
+    ///
+    /// Re-read rather than cached: the sharing bar arrives the instant a site
+    /// starts capturing and takes 56pt of page with it.
+    func pageInsetFractions() async -> (x: Double, y: Double, w: Double, h: Double)? {
+        guard let session = pageSession else { return nil }
+        let js = "JSON.stringify({iw: window.innerWidth, ih: window.innerHeight,"
+               + " ow: window.outerWidth, oh: window.outerHeight})"
+        let ev = try? await call("Runtime.evaluate",
+                                 ["expression": js, "returnByValue": true], sessionId: session)
+        guard let raw = ((ev?["result"] as? [String: Any])?["result"] as? [String: Any])?["value"] as? String,
+              let data = raw.data(using: .utf8),
+              let g = try? JSONSerialization.jsonObject(with: data) as? [String: Double],
+              let ow = g["ow"], let oh = g["oh"], let iw = g["iw"], let ih = g["ih"],
+              ow > 0, oh > 0, iw > 0, ih > 0
+        else { return nil }
+
+        // outer* are device-independent points; inner* are CSS pixels and shrink
+        // as the page is zoomed. Chrome draws no side borders on macOS, so the
+        // width pair recovers the zoom factor and the height maths stays right
+        // at any zoom. At 100% this reduces to (oh - ih) / oh.
+        let zoom = ow / iw
+        let pageW = min(ow, iw * zoom)
+        let pageH = min(oh, ih * zoom)
+        let top = max(0, oh - pageH)
+        guard pageH / oh > 0.2 else { return nil }   // implausible; don't crop
+        return (x: (ow - pageW) / 2 / ow, y: top / oh, w: pageW / ow, h: pageH / oh)
     }
 
     /// Converts a global screen point into page-viewport coordinates.

@@ -42,20 +42,31 @@ final class MirrorStream: NSObject, SCStreamOutput, SCStreamDelegate {
         return Date().timeIntervalSince(last)
     }
 
-    func start(windowID: CGWindowID) async throws {
+    /// Where the captured window sits on screen, kept so a crop can be
+    /// recomputed against it without re-resolving the window.
+    private var windowFrame: CGRect = .zero
+    /// The page area as fractions of the window. Nil mirrors the whole window.
+    private var pageFraction: (x: Double, y: Double, w: Double, h: Double)?
+    /// That fraction resolved against the current window rect.
+    private var crop: CGRect?
+
+    func start(windowID: CGWindowID,
+               pageFraction: (x: Double, y: Double, w: Double, h: Double)? = nil) async throws {
         stop()
 
         guard let window = try await WindowPicker.resolve(windowID) else {
             throw MirrorError.windowGone
         }
 
-        sourceFrame = window.frame
+        windowFrame = window.frame
+        self.pageFraction = pageFraction
+        self.crop = Self.resolve(pageFraction, in: window.frame)
+        sourceFrame = self.crop ?? window.frame
         sourcePID = window.owningApplication?.processID ?? 0
 
         let scale = NSScreen.main?.backingScaleFactor ?? 2.0
         let config = SCStreamConfiguration()
-        config.width  = Int(window.frame.width  * scale)
-        config.height = Int(window.frame.height * scale)
+        apply(to: config, scale: scale)
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
         config.queueDepth = 5
@@ -72,14 +83,83 @@ final class MirrorStream: NSObject, SCStreamOutput, SCStreamDelegate {
         stream = s
         lastFrameAt = Date()
 
-        let frame = window.frame
+        let frame = sourceFrame
         await MainActor.run { self.onSourceGeometryChange?(frame) }
-        NSLog("[Perch] streaming window %u (%.0fx%.0f)", windowID, frame.width, frame.height)
+        NSLog("[Perch] streaming window %u (%.0fx%.0f)%@", windowID, frame.width, frame.height,
+              self.crop == nil ? "" : " cropped to page")
+    }
+
+    /// Re-crops a running stream.
+    ///
+    /// Worth doing on a timer rather than once at the start: the sharing bar
+    /// arrives the instant a site begins capturing and the page shrinks by 56pt
+    /// under it, and the whole point of the crop is that you never see that.
+    func updateCrop(_ fraction: (x: Double, y: Double, w: Double, h: Double)?,
+                    windowFrame newFrame: CGRect? = nil) async {
+        guard let s = stream else { return }
+        if let newFrame, !newFrame.isEmpty { windowFrame = newFrame }
+        pageFraction = fraction
+        let next = Self.resolve(fraction, in: windowFrame)
+        // Sub-pixel churn would restart the stream config every tick for nothing.
+        if let a = next, let b = crop, a.insetBy(dx: -1.5, dy: -1.5).contains(b),
+           b.insetBy(dx: -1.5, dy: -1.5).contains(a) { return }
+        if next == nil && crop == nil { return }
+
+        crop = next
+        sourceFrame = next ?? windowFrame
+
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let config = SCStreamConfiguration()
+        apply(to: config, scale: scale)
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        config.queueDepth = 5
+        config.showsCursor = false
+        config.scalesToFit = true
+        config.capturesAudio = false
+        do { try await s.updateConfiguration(config) }
+        catch { NSLog("%@", "[Perch] could not re-crop: \(error.localizedDescription)") }
+
+        let frame = sourceFrame
+        await MainActor.run { self.onSourceGeometryChange?(frame) }
+    }
+
+    /// `sourceRect` is window-relative, so the screen-space crop is translated
+    /// here — and clamped, because a rect that escapes the window makes
+    /// ScreenCaptureKit hand back empty frames rather than an error.
+    private func apply(to config: SCStreamConfiguration, scale: CGFloat) {
+        let visible = crop ?? windowFrame
+        if let crop {
+            config.sourceRect = CGRect(x: crop.minX - windowFrame.minX,
+                                       y: crop.minY - windowFrame.minY,
+                                       width: crop.width, height: crop.height)
+        }
+        config.width  = Int(visible.width  * scale)
+        config.height = Int(visible.height * scale)
+    }
+
+    /// Fractions are resolved against whatever rect ScreenCaptureKit reports,
+    /// so no coordinate conversion happens anywhere.
+    private static func resolve(_ f: (x: Double, y: Double, w: Double, h: Double)?,
+                                in window: CGRect) -> CGRect? {
+        guard let f, !window.isEmpty else { return nil }
+        let rect = CGRect(x: window.minX + f.x * window.width,
+                          y: window.minY + f.y * window.height,
+                          width: f.w * window.width,
+                          height: f.h * window.height)
+        let clamped = rect.intersection(window)
+        guard !clamped.isNull, clamped.width > 40, clamped.height > 40 else { return nil }
+        // Nothing worth cropping — treat it as "no browser chrome found" rather
+        // than re-encoding the stream for a two-pixel difference.
+        if clamped.height > window.height - 4 && clamped.width > window.width - 4 { return nil }
+        return clamped
     }
 
     func stop() {
         guard let s = stream else { return }
         stream = nil
+        crop = nil
+        pageFraction = nil
         lastFrameAt = nil
         Task { try? await s.stopCapture() }
     }

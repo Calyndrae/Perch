@@ -73,6 +73,7 @@ To float a window on top while you do something else:
 2. Drag and resize the floating window anywhere; it stays on top and follows you
    between Spaces
 3. Bury Chrome behind Discord — the mirror keeps playing
+   The mirror shows the page only: no tab strip, no address bar, no sharing bar
 4. Click and scroll **in the mirror** to control the page. Chrome never comes to
    the front. Typing isn't forwarded — click into Chrome itself to type.
 
@@ -155,8 +156,15 @@ something Perch broke. But it is something Perch can undo: the extension
 promotes the window itself, and puts it back exactly as it found it afterwards.
 Browser UI drops from 87px to 56px, and the capture survives the transition.
 
-**The 56px that remain are Chrome's sharing indicator**, the bar reading
-*"Sharing this tab to …"*. It cannot be closed and it cannot be removed:
+**The mirror crops all of it away.** Perch's floating mirror now shows the page
+and nothing else — no tab strip, no address bar, no sharing bar. It's on by
+default; **Settings → Mirror** turns it off if you'd rather see the whole window.
+The crop is re-read every couple of seconds, because the sharing bar arrives the
+moment a site starts capturing and takes 56pt of page with it.
+
+**The 56px are Chrome's sharing indicator**, the bar reading
+*"Sharing this tab to …"*. In the Chrome window itself it cannot be closed and
+cannot be removed:
 
 | Attempt | Result |
 |---|---|
@@ -338,6 +346,7 @@ so Chrome answers for itself.
 - **Keyboard input isn't forwarded** to the mirror, and clicks reach page content
   only, not the tab strip or address bar.
 - **Chrome only.** No Firefox or Safari.
-- **The sharing bar can't be hidden** while a site holds a live capture — 56px
-  below the address bar, Chrome's own indicator. See above.
+- **The sharing bar can't be hidden in the Chrome window** while a site holds a
+  live capture — 56px below the address bar, Chrome's own indicator. The mirror
+  crops it out; the window itself can't. See above.
 - **Not notarized** — it will be blocked outright on anyone else's Mac.

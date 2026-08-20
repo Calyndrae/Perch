@@ -27,6 +27,21 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Show only the page in the mirror", isOn: $state.cropMirrorToPage)
+
+                Text("Crops the tab strip, the address bar and the "
+                   + "“Sharing this tab to …” indicator out of the mirror, so what "
+                   + "floats on your screen is the page and nothing else.\n\n"
+                   + "That indicator is Chrome's, and it cannot be closed or turned "
+                   + "off — cropping is the only way to get it out of sight. Turn "
+                   + "this off if you'd rather see the whole browser window.")
+                    .font(.caption).foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("Mirror")
+            }
+
+            Section {
                 LabeledContent("Chrome extension") {
                     HStack(spacing: 6) {
                         Circle()
