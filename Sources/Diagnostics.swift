@@ -18,6 +18,7 @@ struct Diagnostics {
         var appUpdateStatus: String?
         var updateStatus: String?
         var lastError: String?
+        var recentCalls: String
         var forwardInput: Bool
         var cropMirrorToPage: Bool
         var autoFullscreenOnShare: Bool
@@ -68,6 +69,10 @@ struct Diagnostics {
                     ? "(none)"
                     : UserExtensions.installed().map { "\($0.name)\($0.enabled ? "" : " [off]")" }
                                         .joined(separator: ", ")))
+        out.append("")
+
+        out.append("— Last commands Perch sent Chrome —")
+        out.append(input.recentCalls)
         out.append("")
 
         out.append("— Chrome crash reports —")

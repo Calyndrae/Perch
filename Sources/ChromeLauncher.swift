@@ -53,6 +53,43 @@ final class ChromeLauncher {
     /// Set while Perch is closing Chrome on purpose, so a deliberate quit is
     /// never reported as a crash.
     private var expectingChromeExit = false
+
+    /// The last few things Perch asked Chrome to do, with timings.
+    ///
+    /// Chrome dying with EXC_BREAKPOINT means one of its own CHECKs failed, and
+    /// the stack is stripped to a single `ChromeMain` symbol — so the report
+    /// says a CHECK failed and nothing whatever about which one. That crash has
+    /// not reproduced here across six attempts with Perch's exact flags, a
+    /// reused profile, repeated loads and a third-party extension, so the
+    /// remaining variable is the machine it happens on. Recording what Perch
+    /// said last turns the next occurrence into evidence instead of another
+    /// dead end.
+    private var recentCalls: [(at: Date, method: String, detail: String)] = []
+    private static let recentCallLimit = 25
+
+    private func recordCall(_ method: String, _ params: [String: Any]) {
+        // Only the fields that identify a call. Page content and script bodies
+        // are deliberately left out — this ends up on a clipboard.
+        var detail = ""
+        if let path = params["path"] as? String {
+            detail = (path as NSString).lastPathComponent
+        } else if let target = params["targetId"] as? String {
+            detail = String(target.prefix(8))
+        }
+        recentCalls.append((Date(), method, detail))
+        if recentCalls.count > Self.recentCallLimit { recentCalls.removeFirst() }
+    }
+
+    /// What Perch last asked of Chrome, newest last.
+    var recentCallLog: String {
+        guard !recentCalls.isEmpty else { return "(nothing sent yet)" }
+        let now = Date()
+        return recentCalls.map { entry in
+            let ago = now.timeIntervalSince(entry.at)
+            return String(format: "  -%6.1fs  %@%@", ago, entry.method,
+                          entry.detail.isEmpty ? "" : "  (\(entry.detail))")
+        }.joined(separator: "\n")
+    }
     private var writeFD: Int32 = -1
     private var readFD: Int32 = -1
     private var nextID = 0
@@ -306,6 +343,7 @@ final class ChromeLauncher {
         let id = nextID
         var request: [String: Any] = ["id": id, "method": method, "params": params]
         if let sessionId { request["sessionId"] = sessionId }
+        recordCall(method, params)
         try send(request)
 
         guard let reply = try await receive(matching: id) else {
@@ -673,6 +711,7 @@ final class ChromeLauncher {
                     + "closed.\n\nLast output:\n\(Self.lastChromeLogTail())\n\n"
         }
 
+        report += "What Perch last asked Chrome to do:\n\(recentCallLog)\n\n"
         report += "Press “Set Up Chrome Now” to start it again. "
                 + "Settings → Diagnostics copies the full details."
         return report

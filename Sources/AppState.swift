@@ -429,6 +429,7 @@ final class AppState: ObservableObject {
             appUpdateStatus: appUpdateStatus,
             updateStatus: updateStatus,
             lastError: lastError,
+            recentCalls: launcher.recentCallLog,
             forwardInput: forwardInput,
             cropMirrorToPage: cropMirrorToPage,
             autoFullscreenOnShare: autoFullscreenOnShare,
