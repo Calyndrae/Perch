@@ -54,6 +54,14 @@ else echo "  (no chrome.log — Perch may never have launched Chrome)"; fi
 echo; echo "--- chrome.log, last 25 real lines ---"
 [ -f "$S/chrome.log" ] && grep -v -E "$NOISE" "$S/chrome.log" | tail -25 | sed 's/^/  /' || echo "  (none)"
 
+echo; echo "--- What Perch last asked Chrome to do ---"
+if [ -f "$S/perch-cdp.log" ]; then
+  echo "  (log written $(date -r "$S/perch-cdp.log" '+%F %T'))"
+  tail -30 "$S/perch-cdp.log" | sed 's/^/  /'
+else
+  echo "  (no perch-cdp.log — needs Perch 0.17.0 or newer, and one launch attempt)"
+fi
+
 echo; echo "--- Crash reports, last 3 days ---"
 found=0
 for pat in "Google Chrome" "Perch"; do

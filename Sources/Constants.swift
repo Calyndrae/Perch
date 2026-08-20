@@ -44,6 +44,13 @@ enum Perch {
         supportDirectory.appendingPathComponent("chrome.log").path
     }
 
+    /// Perch's side of the conversation with Chrome. Chrome's log says what
+    /// Chrome did; this says what Perch asked for, which is the half that was
+    /// missing every time a crash had to be explained.
+    static var cdpLogPath: String {
+        supportDirectory.appendingPathComponent("perch-cdp.log").path
+    }
+
     static var bridgeSocketPath: String {
         supportDirectory.appendingPathComponent("bridge.sock").path
     }

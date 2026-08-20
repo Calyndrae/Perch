@@ -53,6 +53,8 @@ final class ChromeLauncher {
     /// Set while Perch is closing Chrome on purpose, so a deliberate quit is
     /// never reported as a crash.
     private var expectingChromeExit = false
+    /// One repair attempt per Perch session, never a loop.
+    private var hasRetriedAfterRepair = false
 
     /// The last few things Perch asked Chrome to do, with timings.
     ///
@@ -78,6 +80,34 @@ final class ChromeLauncher {
         }
         recentCalls.append((Date(), method, detail))
         if recentCalls.count > Self.recentCallLimit { recentCalls.removeFirst() }
+        Self.appendToCDPLog(method, detail)
+    }
+
+    /// Written as it happens, not held in memory.
+    ///
+    /// When Chrome takes Perch's process down with it, or the user never opens
+    /// Settings, an in-memory buffer is worth nothing. A file survives both and
+    /// the debug script can read it.
+    private static func appendToCDPLog(_ method: String, _ detail: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let line = "\(stamp)  \(method)\(detail.isEmpty ? "" : "  (\(detail))")\n"
+        guard let data = line.data(using: .utf8) else { return }
+        let path = Perch.cdpLogPath
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile(); handle.write(data); try? handle.close()
+        } else {
+            try? data.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
+    /// Starts the log fresh for each Chrome, so it stays small and always
+    /// describes the launch that is actually in question.
+    private static func beginCDPLog(_ args: [String]) {
+        let header = "=== Chrome launched \(ISO8601DateFormatter().string(from: Date())) ===\n"
+                   + args.dropFirst().filter { $0.hasPrefix("--") }
+                         .map { "  \($0.hasPrefix("--user-data-dir") ? "--user-data-dir=…" : $0)" }
+                         .joined(separator: "\n") + "\n"
+        try? header.data(using: .utf8)?.write(to: URL(fileURLWithPath: Perch.cdpLogPath))
     }
 
     /// What Perch last asked of Chrome, newest last.
@@ -131,7 +161,33 @@ final class ChromeLauncher {
         try spawnChrome(extraArguments: extraArguments)
 
         // Chrome needs to be up before it will answer CDP.
-        try await waitForChrome()
+        do {
+            try await waitForChrome()
+        } catch let error as LaunchError {
+            // Chrome died on the way up. Its disposable caches are the one part
+            // of the profile that can be rebuilt for free, and a corrupt entry
+            // there is survivable for an ordinary launch while being fatal for
+            // ours — the log carried "Destroying invalid entry" immediately
+            // before one of these deaths. So clear them and try once more.
+            //
+            // Once, and never for anything but a death at launch: a retry loop
+            // against a browser that keeps dying is how Chrome got hammered
+            // into the ground once already.
+            guard case .chromeDiedAtLaunch = error, !hasRetriedAfterRepair else { throw error }
+            hasRetriedAfterRepair = true
+            let cleared = Self.clearDisposableCaches()
+            NSLog("%@", "[Perch] Chrome died at launch; cleared \(cleared) and retrying once")
+            try spawnChrome(extraArguments: extraArguments)
+            do {
+                try await waitForChrome()
+            } catch {
+                throw LaunchError.chromeDiedAtLaunch(
+                    "Chrome quit at startup twice — once before clearing its caches "
+                    + "(\(cleared)) and once after, so a corrupt cache isn't the cause.\n\n"
+                    + Self.lastChromeLogTail()
+                    + "\n\nWhat Perch had asked Chrome to do:\n" + recentCallLog)
+            }
+        }
 
         let id = try await loadUnpacked(path: extensionPath)
         loadedExtensionID = id
@@ -289,6 +345,7 @@ final class ChromeLauncher {
             throw LaunchError.spawnFailed(rc)
         }
 
+        Self.beginCDPLog(args)
         chromePID = pid
         chromeStartedAt = Date()
         expectingChromeExit = false
@@ -313,7 +370,9 @@ final class ChromeLauncher {
             // crash into a confusing timeout. Say what actually happened, and
             // quote what Chrome printed on its way out.
             if chromePID != 0, kill(chromePID, 0) != 0, errno == ESRCH {
-                throw LaunchError.chromeDiedAtLaunch(Self.lastChromeLogTail())
+                throw LaunchError.chromeDiedAtLaunch(
+                    Self.lastChromeLogTail()
+                    + "\n\nWhat Perch had asked Chrome to do:\n" + recentCallLog)
             }
             guard chromePID != 0, kill(chromePID, 0) == 0 else {
                 try await Task.sleep(nanoseconds: 250_000_000)
@@ -715,6 +774,27 @@ final class ChromeLauncher {
         report += "Press “Set Up Chrome Now” to start it again. "
                 + "Settings → Diagnostics copies the full details."
         return report
+    }
+
+    /// Removes only what Chrome rebuilds by itself.
+    ///
+    /// Caches hold no logins, cookies, history or extensions — deliberately
+    /// scoped that way, because Perch's profile is where the user actually
+    /// signs in and losing that to a speculative repair would be far worse than
+    /// the failure it was trying to fix.
+    @discardableResult
+    static func clearDisposableCaches() -> String {
+        let profile = URL(fileURLWithPath: Perch.chromeProfilePath)
+        let disposable = ["Default/Cache", "Default/Code Cache", "Default/GPUCache",
+                          "Default/Service Worker/CacheStorage", "GrShaderCache",
+                          "ShaderCache", "GPUCache"]
+        var removed: [String] = []
+        for relative in disposable {
+            let url = profile.appendingPathComponent(relative)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            if (try? FileManager.default.removeItem(at: url)) != nil { removed.append(relative) }
+        }
+        return removed.isEmpty ? "no caches present" : removed.joined(separator: ", ")
     }
 
     /// The line where Chrome says it is giving up, if there is one. Chrome
