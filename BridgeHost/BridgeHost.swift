@@ -35,8 +35,16 @@ struct BridgeHost {
                 send(["ok": true, "echo": type])
             } else if type == "ping" || type == "status" {
                 let alive = appRunning && isSocketAlive(socketFD)
-                send(["ok": true, "appRunning": alive, "echo": type,
-                      "autoFullscreen": autoFullscreenOnShare()])
+                var reply: [String: Any] = ["ok": true, "appRunning": alive, "echo": type,
+                                            "autoFullscreen": autoFullscreenOnShare()]
+                // Perch cannot raise a notification itself: macOS refuses
+                // UNUserNotificationCenter to a locally signed, non-notarized
+                // build. Chrome is notarized and its notifications land, so the
+                // news travels out this way instead.
+                if let pending = perchDefault("PerchPendingUpdateVersion") as? String {
+                    reply["updateInstalled"] = pending
+                }
+                send(reply)
             } else {
                 send(["ok": false, "error": "unknown message type: \(type)"])
             }
@@ -53,10 +61,11 @@ struct BridgeHost {
     /// change in Settings reaches the extension the next time it asks, which is
     /// immediately before it would act on it.
     private static func autoFullscreenOnShare() -> Bool {
-        guard let defaults = UserDefaults(suiteName: "com.trixarh.perch"),
-              let value = defaults.object(forKey: "PerchAutoFullscreenOnShare") as? Bool
-        else { return true }   // shipped default
-        return value
+        (perchDefault("PerchAutoFullscreenOnShare") as? Bool) ?? true   // shipped default
+    }
+
+    private static func perchDefault(_ key: String) -> Any? {
+        UserDefaults(suiteName: "com.trixarh.perch")?.object(forKey: key)
     }
 
     private static func relay(_ object: [String: Any], to fd: Int32) {

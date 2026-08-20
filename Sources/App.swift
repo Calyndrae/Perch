@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UpdateNotifier.clearIfApplied()
         state.boot()
         installStatusItem()
 
@@ -73,6 +74,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         item.menu = menu
         statusItem = item
+        refreshUpdateBadge()
+        NotificationCenter.default.addObserver(
+            forName: .perchUpdateStaged, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.refreshUpdateBadge() }
+        }
+    }
+
+    /// The one place a staged update is visible without opening Settings.
+    private func refreshUpdateBadge() {
+        guard let menu = statusItem?.menu else { return }
+        let existing = menu.items.first { $0.identifier == Self.updateItemID }
+        guard let version = UpdateNotifier.pendingAppVersion else {
+            if let existing { menu.removeItem(existing) }
+            statusItem?.button?.image = NSImage(
+                systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: "Perch")
+            return
+        }
+        statusItem?.button?.image = NSImage(
+            systemSymbolName: "macwindow.badge.plus", accessibilityDescription: "Perch — update ready")
+        let title = "Update to \(version) — Relaunch"
+        if let existing { existing.title = title; return }
+        let entry = NSMenuItem(title: title, action: #selector(relaunchForUpdate), keyEquivalent: "")
+        entry.target = self
+        entry.identifier = Self.updateItemID
+        menu.insertItem(entry, at: 0)
+        menu.insertItem(.separator(), at: 1)
+    }
+
+    private static let updateItemID = NSUserInterfaceItemIdentifier("perch.update")
+
+    @objc private func relaunchForUpdate() {
+        PermissionPrompter.relaunchPerch()
     }
 
     @objc private func openMain() {

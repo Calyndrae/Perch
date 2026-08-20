@@ -132,6 +132,9 @@ final class AppState: ObservableObject {
             let result = await ExtensionUpdater.updateFromGitHub()
             self.updateStatus = result.describedForUser
             self.extensionVersion = ExtensionUpdater.installedVersion()
+            if case .updated(let version) = result {
+                UpdateNotifier.extensionUpdated(to: version)
+            }
         }
 
         // And update Perch itself. The swap happens on disk; the running copy
@@ -140,7 +143,10 @@ final class AppState: ObservableObject {
         Task { @MainActor in
             let result = await AppUpdater.checkAndInstall()
             self.appUpdateStatus = result.describedForUser
-            if case .installed = result { self.appUpdateReady = true }
+            if case .installed(let version) = result {
+                self.appUpdateReady = true
+                UpdateNotifier.appUpdated(to: version)
+            }
         }
 
         bridge.onPresenceChange = { [weak self] present in
@@ -369,7 +375,10 @@ final class AppState: ObservableObject {
         Task {
             let result = await AppUpdater.checkAndInstall()
             appUpdateStatus = result.describedForUser
-            if case .installed = result { appUpdateReady = true }
+            if case .installed(let version) = result {
+                appUpdateReady = true
+                UpdateNotifier.appUpdated(to: version)
+            }
         }
     }
 

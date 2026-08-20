@@ -101,6 +101,32 @@ async function stopInjecting(reason) {
   notifyOnce();
 }
 
+// Perch updates itself on disk at every launch and the new copy only takes over
+// on a relaunch, so an update you are never told about is one you keep not
+// running. Perch cannot post this itself — macOS refuses notifications to a
+// locally signed, non-notarized app — but Chrome can.
+//
+// Announced once per version. chrome.storage rather than a variable, because the
+// service worker is reclaimed constantly and would otherwise re-announce the
+// same version every time it woke up.
+async function announceUpdate(version) {
+  try {
+    const seen = await chrome.storage.local.get('announcedUpdate');
+    if (seen && seen.announcedUpdate === version) return;
+    await chrome.storage.local.set({ announcedUpdate: version });
+    chrome.notifications.create('perch-updated', {
+      type: 'basic',
+      iconUrl: 'icon128.png',
+      title: `Perch ${version} is ready`,
+      message: 'It is installed already and takes over when you relaunch Perch. '
+             + 'The copy running now keeps working until then.',
+      priority: 1,
+    }, () => void chrome.runtime.lastError);
+  } catch (_) {
+    // storage unavailable: better to stay quiet than to nag on every wake-up.
+  }
+}
+
 function notifyOnce() {
   if (warned) return;
   warned = true;
@@ -145,6 +171,7 @@ function connect() {
   port.onMessage.addListener((msg) => {
     retryDelay = 1000;
     if (pendingStatus) pendingStatus(msg || {});
+    if (msg && msg.updateInstalled) announceUpdate(msg.updateInstalled);
     if (msg && msg.appRunning) startInjecting();
     else stopInjecting('app reported not running');
   });
@@ -196,7 +223,10 @@ chrome.runtime.onInstalled.addListener(ensureReconnectAlarm);
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== RECONNECT_ALARM) return;
   ensureReconnectAlarm();
-  if (!port) connect();
+  if (!port) { connect(); return; }
+  // Already connected: use the tick to ask whether anything changed, which is
+  // how a staged update gets noticed inside a minute.
+  try { port.postMessage({ type: 'status' }); } catch (_) {}
 });
 
 // Putting the window fullscreen when the page goes fullscreen.

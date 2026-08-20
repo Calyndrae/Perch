@@ -126,6 +126,17 @@ copy is left alone. The old version goes to the Trash rather than being deleted.
 The swap happens on disk; the running copy keeps going until you relaunch, so an
 update never pulls the app out from under you mid-session.
 
+**You get told when that happens.** The menu bar icon picks up a badge and gains
+an **Update to x.y.z — Relaunch** item, and Chrome raises a notification saying
+the same thing, once per version.
+
+Chrome raises it rather than Perch because macOS refuses notifications to a
+locally signed, non-notarized app outright — measured: `requestAuthorization`
+returns `granted=false` with *"Notifications are not allowed for this
+application"*, and nothing is ever delivered. Chrome is notarized, so its
+notifications land. The extension learns about the update by asking the native
+host, which reads it from Perch's own preferences.
+
 One bootstrap note: self-updating only works from a version that already has it,
 so anything at **0.9.0 or earlier must be replaced by hand once**.
 
