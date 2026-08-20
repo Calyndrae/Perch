@@ -90,6 +90,17 @@
     const nativeRemove = ET.prototype.removeEventListener;
     const wrappers = new WeakMap();
 
+    // Fullscreen removes the very thing exit-intent aims at. There is no tab
+    // strip, no address bar and no window chrome to head toward, so an upward
+    // flick can no longer mean "leaving" — but it is exactly how every video
+    // player is told to reveal its controls. Measured: 3 of 8 upward moves
+    // reached the page in fullscreen, same as windowed, so a player's control
+    // bar simply would not appear. The guard stands down while fullscreen.
+    const isFullscreen = () => {
+      try { return !!(doc.fullscreenElement || doc.webkitFullscreenElement); }
+      catch (_) { return false; }
+    };
+
     const wrapExitIntent = (listener, type) => {
       if (typeof listener !== 'function') return listener;
       let known = wrappers.get(listener);
@@ -98,7 +109,8 @@
       known = function (event) {
         // `this` is whatever the handler was attached to, so element-level
         // handlers are never filtered even though the prototype is patched.
-        if (event && typeof event.clientY === 'number' && isDocumentish(this)) {
+        if (event && typeof event.clientY === 'number'
+            && isDocumentish(this) && !isFullscreen()) {
           if (MOVE_LIKE.has(type)) {
             const headingUp = event.clientY < lastY;
             lastY = event.clientY;
@@ -191,6 +203,32 @@
       }
     }
 
+    // ---- fullscreen --------------------------------------------------------
+    // Chrome will not take the WINDOW fullscreen while the tab is being
+    // captured. Measured, and identical in a clean Chrome with no extension at
+    // all: document.fullscreenElement is set, the window stays put, and the tab
+    // strip and address bar sit there through the whole share. Nothing the page
+    // can do fixes that — but the extension can promote the window itself, so
+    // the announcement goes out to the isolated world.
+    //
+    // Only from the top document. A fullscreened iframe raises the event here
+    // too, with fullscreenElement pointing at the frame, so frames would only
+    // duplicate it.
+    if (win === win.top) {
+      const announce = () => {
+        try {
+          win.postMessage({
+            type: 'perch:fullscreen',
+            on: !!(doc.fullscreenElement || doc.webkitFullscreenElement),
+          }, win.location.origin === 'null' ? '*' : win.location.origin);
+        } catch (_) {}
+      };
+      try {
+        doc.addEventListener('fullscreenchange', announce);
+        doc.addEventListener('webkitfullscreenchange', announce);
+      } catch (_) {}
+    }
+
     // ---- screen capture ----------------------------------------------------
     // A genuine displaySurface:"monitor" stream is screen-sized. Ours is the
     // tab, so a site comparing getSettings().width against screen.width would
@@ -202,6 +240,23 @@
     // an active capture these getters return the truth.
     let activeCaptures = 0;
     let fakeScreen = null;
+
+    // The spoof is sized from the capture, which is the tab — so on a small
+    // window it can come out SMALLER than the window reporting it. Measured:
+    // screen 800x592 inside a 1200-wide window. No real display is smaller
+    // than the window drawn on it, so that is both a tell and a trap for any
+    // player that decides "am I fullscreen?" by comparing the viewport with
+    // screen.*.
+    //
+    // Fullscreen drops the spoof altogether: there the tab genuinely is the
+    // whole display, so the truth is already the consistent answer.
+    const effectiveFake = () => {
+      if (!fakeScreen || isFullscreen()) return null;
+      return {
+        w: Math.max(fakeScreen.w, win.outerWidth || 0, win.innerWidth || 0),
+        h: Math.max(fakeScreen.h, win.outerHeight || 0, win.innerHeight || 0),
+      };
+    };
 
     const screenProto = win.Screen && win.Screen.prototype;
     if (screenProto) {
@@ -216,15 +271,16 @@
         const original = originals[prop];
         const getter = asNative(function () {
           const real = original.get.call(this);
-          if (!fakeScreen) return real;
-          if (prop === 'width') return fakeScreen.w;
-          if (prop === 'height') return fakeScreen.h;
+          const fake = effectiveFake();
+          if (!fake) return real;
+          if (prop === 'width') return fake.w;
+          if (prop === 'height') return fake.h;
           // avail* keeps its real proportion of the display, so the pair stays
           // plausible rather than suspiciously identical to width/height.
           const isW = prop === 'availWidth';
           const full = originals[isW ? 'width' : 'height'];
           const realFull = full ? full.get.call(this) : 0;
-          const base = isW ? fakeScreen.w : fakeScreen.h;
+          const base = isW ? fake.w : fake.h;
           return realFull ? Math.round(base * (real / realFull)) : base;
         }, `get ${prop}`);
         try {

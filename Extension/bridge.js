@@ -12,12 +12,27 @@
 
   const REQUEST = 'perch:tab-stream-request';
   const RESPONSE = 'perch:tab-stream-response';
+  const FULLSCREEN = 'perch:fullscreen';
 
   window.addEventListener('message', (event) => {
     // Only this page may ask; ignore anything relayed in from a frame.
     if (event.source !== window) return;
     const data = event.data;
-    if (!data || data.type !== REQUEST || typeof data.nonce !== 'string') return;
+    if (!data) return;
+
+    // The page went fullscreen. Worth passing on because Chrome refuses to
+    // move the window while the tab is captured, leaving the tab strip and
+    // address bar on screen for the whole share; only the service worker can
+    // reach chrome.windows and put that right.
+    if (data.type === FULLSCREEN && typeof data.on === 'boolean') {
+      try {
+        chrome.runtime.sendMessage({ type: FULLSCREEN, on: data.on },
+                                   () => void chrome.runtime.lastError);
+      } catch (_) {}
+      return;
+    }
+
+    if (data.type !== REQUEST || typeof data.nonce !== 'string') return;
 
     chrome.runtime.sendMessage({ type: REQUEST }, (reply) => {
       const failed = chrome.runtime.lastError

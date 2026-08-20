@@ -181,6 +181,46 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (!port) connect();
 });
 
+// Putting the window fullscreen when the page goes fullscreen.
+//
+// Chrome declines to move the window while the tab is being captured, so a page
+// that goes fullscreen mid-share ends up "fullscreen" with the tab strip and
+// the address bar still on screen. Measured on a clean Chrome with no extension
+// loaded, so this is Chrome's own behaviour rather than something Perch broke —
+// and chrome.windows is the one lever that still works from here.
+//
+// Deliberately conservative: it never touches a window Chrome already
+// fullscreened itself, and on the way out it restores the state the window
+// actually had rather than assuming "normal".
+const priorWindowState = new Map();
+let lastWindowChange = 0;
+
+async function followFullscreen(windowId, on) {
+  if (typeof windowId !== 'number') return;
+  // A page can post this message as often as it likes. Rate limiting keeps a
+  // hostile or buggy one from turning it into a window-state loop.
+  const now = Date.now();
+  if (now - lastWindowChange < 400) return;
+  lastWindowChange = now;
+  try {
+    const win = await chrome.windows.get(windowId);
+    if (on) {
+      if (win.state === 'fullscreen') return;   // Chrome managed it unaided
+      priorWindowState.set(windowId, win.state);
+      await chrome.windows.update(windowId, { state: 'fullscreen' });
+    } else {
+      const prior = priorWindowState.get(windowId);
+      if (prior === undefined) return;          // we did not put it there
+      priorWindowState.delete(windowId);
+      await chrome.windows.update(windowId, { state: prior });
+    }
+  } catch (_) {
+    // Window closed mid-transition, or Chrome refused. Nothing to recover.
+  }
+}
+
+chrome.windows.onRemoved.addListener((id) => priorWindowState.delete(id));
+
 // A site asking to record the screen gets its own tab back instead.
 //
 // chrome.tabCapture.getMediaStreamId is the only way to produce a capture
@@ -189,7 +229,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // usable only by that tab — it cannot be passed elsewhere to grab something
 // else. The id also expires within seconds if unused.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (!msg || msg.type !== 'perch:tab-stream-request') return;
+  if (!msg) return;
+  if (msg.type === 'perch:fullscreen') {
+    if (injecting) followFullscreen(sender.tab && sender.tab.windowId, msg.on);
+    return;
+  }
+  if (msg.type !== 'perch:tab-stream-request') return;
   const tabId = sender.tab && sender.tab.id;
   if (!tabId) { sendResponse({ error: 'no tab' }); return; }
   if (!injecting) { sendResponse({ error: 'perch inactive' }); return; }

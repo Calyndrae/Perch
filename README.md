@@ -130,6 +130,46 @@ so anything at **0.9.0 or earlier must be replaced by hand once**.
 
 ---
 
+## Fullscreen, and the bar that says you're sharing
+
+**Fullscreen works normally.** A video player's fullscreen button, or Chrome's
+own View → Enter Full Screen, fills the display and hides the tab strip and
+address bar exactly as it would without Perch. Measured against a clean Chrome
+with no extension loaded: identical geometry, to the pixel.
+
+Two things needed fixing to keep it that way, and one thing can't be fixed.
+
+**The exit-intent guard stands down in fullscreen.** Perch drops upward mouse
+movement near the top of the window, because that flick toward the tab strip is
+what exit-intent popups watch for. In fullscreen there is no tab strip to head
+toward — but that same upward flick is exactly how every video player is told to
+show its controls. Measured before the fix: 3 of 8 upward moves reached the
+page, so the control bar simply would not appear. Now 8 of 8 in fullscreen, and
+still 3 of 8 windowed, where the guard belongs.
+
+**Chrome won't move the window while a tab is being captured.** A page that goes
+fullscreen mid-share gets `fullscreenElement` set while the window stays put —
+tab strip and address bar on screen for the whole share. This is Chrome's own
+behaviour, reproduced on a clean Chrome with no extension at all, so it is not
+something Perch broke. But it is something Perch can undo: the extension
+promotes the window itself, and puts it back exactly as it found it afterwards.
+Browser UI drops from 87px to 56px, and the capture survives the transition.
+
+**The 56px that remain are Chrome's sharing indicator**, the bar reading
+*"Sharing this tab to …"*. It cannot be closed and it cannot be removed:
+
+| Attempt | Result |
+|---|---|
+| `--disable-infobars` | still 56px |
+| `--disable-features=TabSharingInfobar` | still 56px |
+| Extension `tabCapture` instead of `getDisplayMedia` | *"Extension has not been invoked for the current page"* — needs `activeTab`, which a UI-less extension can never be granted |
+
+Chromium treats a visible capture indicator as non-negotiable, and on reflection
+that is the right call — it is the one thing on screen telling you a recording
+is running. What it says is also true: only this tab is going anywhere.
+
+---
+
 ## Can the extension be locked so nobody removes it?
 
 Not with a real *"Installed by your administrator"* lock. Chrome refuses to
@@ -298,4 +338,6 @@ so Chrome answers for itself.
 - **Keyboard input isn't forwarded** to the mirror, and clicks reach page content
   only, not the tab strip or address bar.
 - **Chrome only.** No Firefox or Safari.
+- **The sharing bar can't be hidden** while a site holds a live capture — 56px
+  below the address bar, Chrome's own indicator. See above.
 - **Not notarized** — it will be blocked outright on anyone else's Mac.
