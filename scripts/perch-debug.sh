@@ -14,7 +14,14 @@ else
   echo "NOT INSTALLED at $P"; ls -d /Applications/*erch* 2>/dev/null
 fi
 echo "running    : $(pgrep -f 'Perch.app/Contents/MacOS/Perch' | tr '\n' ' ' || echo NO)"
-echo "extension  : $(python3 -c "import json;print(json.load(open('$S/Extension/manifest.json'))['version'])" 2>/dev/null || echo 'not downloaded')"
+# sed, not python3: a Mac without Command Line Tools has no python3, and the
+# fallback text made a perfectly good extension look like a failed download.
+EXTVER=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$S/Extension/manifest.json" 2>/dev/null | head -1)
+if [ -n "$EXTVER" ]; then echo "extension  : $EXTVER"
+elif [ -f "$S/Extension/manifest.json" ]; then echo "extension  : manifest present but no version in it — CORRUPT"
+else echo "extension  : not downloaded"; fi
+echo "python3    : $(command -v python3 >/dev/null 2>&1 && echo yes || echo 'no (fine — nothing here needs it)')"
+echo "chrome up to date? compare the version below against the newest Chrome release"
 
 echo; echo "--- Chrome ---"
 echo "version        : $(defaults read '/Applications/Google Chrome.app/Contents/Info.plist' CFBundleShortVersionString 2>/dev/null || echo 'NOT FOUND')"
